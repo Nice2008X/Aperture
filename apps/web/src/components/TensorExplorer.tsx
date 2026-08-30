@@ -7,6 +7,7 @@ import { Histogram } from "./Histogram.js";
 import { AttentionView } from "./AttentionView.js";
 import { ExpertRoutingView } from "./ExpertRoutingView.js";
 import { composeSlice, defaultWindow, parameterKey } from "../tensor.js";
+import { describeInputConstruction } from "../nodeInputs.js";
 import type { InferenceState } from "../useInference.js";
 
 interface Props {
@@ -35,7 +36,7 @@ function entryKey(p: ParamEntry): string {
 }
 
 type ViewMode = "heatmap" | "matrix" | "histogram";
-type Source = "weights" | "activations" | "compare";
+type Source = "weights" | "activations" | "io" | "compare";
 
 const MAX_MATRIX_CELLS = 128 * 128; // beyond this, the Matrix tab is disabled rather than freezing the tab
 
@@ -62,6 +63,11 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const [windowRanges, setWindowRanges] = useState<{ start: number; end: number }[] | null>(null);
   const [view, setView] = useState<ViewMode>("heatmap");
   const [source, setSource] = useState<Source>("weights");
+  // Input/Output tab's own sub-state: which side (defaults to Output — the
+  // node's own result, the more central artifact), and for Input, which
+  // upstream source when a node has more than one (e.g. a Residual Add).
+  const [ioSubTab, setIoSubTab] = useState<"input" | "output">("output");
+  const [ioSourceId, setIoSourceId] = useState<string | null>(null);
 
   // a freshly-finished run is almost always what the user wants to look at next
   useEffect(() => {
@@ -81,6 +87,18 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
       setWindowRanges(null);
     }
   }, [selectedNode]);
+
+  // A stale sourceId from the previously-selected node would otherwise
+  // silently look up the wrong tensor once a new node with different inputs
+  // is selected — reset back to Output (always valid) and let the source
+  // picker default to the new node's own first input on demand.
+  useEffect(() => {
+    setIoSubTab("output");
+    setIoSourceId(null);
+  }, [selectedNode?.id]);
+
+  const inputSources = useMemo(() => (selectedNode ? describeInputConstruction(model, selectedNode).sources : []), [model, selectedNode]);
+  const activeIoSourceId = ioSourceId ?? inputSources[0]?.sourceId ?? null;
 
   const selectedEntry = useMemo(
     () => allParams.find((p) => entryKey(p) === selectedKey) ?? null,
@@ -117,6 +135,16 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const routerWeightsTensor = source === "activations" && selectedNode ? inference?.result?.routerWeights?.[selectedNode.id] ?? null : null;
   const expertAssignmentTensor = source === "activations" && selectedNode ? inference?.result?.expertAssignment?.[selectedNode.id] ?? null : null;
 
+  // Both sides of the Input/Output tab read straight out of the already-
+  // fully-captured bulk run (no fetch needed — see PLAN.md phase 2's
+  // encode_bulk_run design), unlike Weights' async windowed load above.
+  // "Output" is this node's own capture, same value the Activations tab
+  // shows; "Input" looks up whichever upstream source is currently picked.
+  const ioOutputTensor = source === "io" && selectedNode ? inference?.result?.activations[selectedNode.id] ?? null : null;
+  const ioInputTensor = source === "io" && activeIoSourceId ? inference?.result?.activations[activeIoSourceId] ?? null : null;
+  const ioTensor = ioSubTab === "output" ? ioOutputTensor : ioInputTensor;
+  const ioStats = useMemo(() => (ioTensor ? computeStats(ioTensor.data) : null), [ioTensor]);
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return allParams.filter((p) => p.ref.name.toLowerCase().includes(q) || p.ownerName.toLowerCase().includes(q));
@@ -126,8 +154,8 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const loadedElements = tensor ? numElements(tensor.shape) : 0;
   const loadedBytes = ref ? loadedElements * (ref.bytes / ref.numElements) : 0;
 
-  const displayTensor = source === "weights" ? tensor : activationTensor;
-  const displayStats = source === "weights" ? stats : activationStats;
+  const displayTensor = source === "weights" ? tensor : source === "io" ? ioTensor : activationTensor;
+  const displayStats = source === "weights" ? stats : source === "io" ? ioStats : activationStats;
   const canShowMatrix = !!displayTensor && displayTensor.data.length <= MAX_MATRIX_CELLS;
 
   // keep the active tab valid as the selection changes (e.g. a 1-value bias has no useful histogram)
@@ -205,6 +233,9 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
             <button className={source === "activations" ? "active" : ""} onClick={() => setSource("activations")}>
               Activations (last run)
             </button>
+            <button className={source === "io" ? "active" : ""} onClick={() => setSource("io")}>
+              Input ↔ Output
+            </button>
             <button className={source === "compare" ? "active" : ""} disabled={!hasPromptB} onClick={() => setSource("compare")} title={!hasPromptB ? "Run Prompt B first" : undefined}>
               Compare (A vs B)
             </button>
@@ -215,6 +246,37 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
         {source === "activations" && !selectedNode && <div className="empty-hint">Select a component to inspect its activation from the last forward pass.</div>}
         {source === "activations" && selectedNode && !activationTensor && (
           <div className="empty-hint">No activation was captured for "{selectedNode.name}" — try a leaf computation node (LayerNorm, a projection, the activation function, …).</div>
+        )}
+        {source === "io" && !selectedNode && <div className="empty-hint">Select a component to inspect its input and output tensors from the last forward pass.</div>}
+
+        {source === "io" && selectedNode && (
+          <div className="io-subtabs">
+            <button className={ioSubTab === "output" ? "active" : ""} onClick={() => setIoSubTab("output")}>
+              Output
+            </button>
+            <button
+              className={ioSubTab === "input" ? "active" : ""}
+              disabled={inputSources.length === 0}
+              onClick={() => setIoSubTab("input")}
+              title={inputSources.length === 0 ? "This component has no recorded input sources" : undefined}
+            >
+              Input
+            </button>
+            {ioSubTab === "input" && inputSources.length > 1 && (
+              <select className="io-source-select" value={activeIoSourceId ?? ""} onChange={(e) => setIoSourceId(e.target.value)}>
+                {inputSources.map((s) => (
+                  <option key={s.sourceId} value={s.sourceId}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+        {source === "io" && selectedNode && !ioTensor && (
+          <div className="empty-hint">
+            No {ioSubTab === "output" ? "output" : "input"} activation was captured for "{selectedNode.name}" — try a leaf computation node (LayerNorm, a projection, the activation function, …).
+          </div>
         )}
 
         {source === "weights" && ref && (
@@ -242,6 +304,18 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
             <div className="tensor-meta">
               <span>Shape {activationTensor.shape.join(" × ")}</span>
               <span>dtype {activationTensor.dtype}</span>
+              <span>from prompt: "{inference?.displayTokens?.join("")}"</span>
+            </div>
+          </div>
+        )}
+        {source === "io" && selectedNode && ioTensor && (
+          <div className="tensor-header">
+            <div className="tensor-title">
+              {selectedNode.name} — {ioSubTab === "output" ? "output" : `input (${inputSources.find((s) => s.sourceId === activeIoSourceId)?.label ?? "?"})`}
+            </div>
+            <div className="tensor-meta">
+              <span>Shape {ioTensor.shape.join(" × ")}</span>
+              <span>dtype {ioTensor.dtype}</span>
               <span>from prompt: "{inference?.displayTokens?.join("")}"</span>
             </div>
           </div>

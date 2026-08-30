@@ -117,6 +117,15 @@ const en = {
   "footer.norm": "{value} norm",
   "footer.gpu": "GPU",
   "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+
+  // ModelInfoBar regroup (phase 12, 2026-08-30) — same i18n-deferred
+  // treatment as the footer keys above.
+  "modelInfo.groupModel": "Model",
+  "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+  "modelInfo.groupArchitecture": "Architecture",
+  "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+  "modelInfo.groupRuntime": "Runtime",
+  "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -221,6 +230,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   es: {
     "app.backToHome": "Inicio",
@@ -320,6 +335,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   fr: {
     "app.backToHome": "Accueil",
@@ -419,6 +440,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   de: {
     "app.backToHome": "Startseite",
@@ -518,6 +545,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   ja: {
     "app.backToHome": "ホーム",
@@ -617,6 +650,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   ko: {
     "app.backToHome": "홈",
@@ -716,6 +755,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   pt: {
     "app.backToHome": "Início",
@@ -815,6 +860,12 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
   ru: {
     "app.backToHome": "Домой",
@@ -914,5 +965,11 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "footer.norm": "{value} norm",
     "footer.gpu": "GPU",
     "footer.gpuTooltip": "Every computation in this app — the forward pass included — runs on the backend's real GPU via PyTorch/transformers, not in this browser tab.",
+    "modelInfo.groupModel": "Model",
+    "modelInfo.modelLine": "{arch} · {params} parameters · {layers} layers",
+    "modelInfo.groupArchitecture": "Architecture",
+    "modelInfo.architectureLine": "{heads} heads · {hidden} hidden · {mlp} MLP · {vocab} vocab",
+    "modelInfo.groupRuntime": "Runtime",
+    "modelInfo.runtimeLine": "{dtype} · {bytes} on GPU · {context} context",
   },
 };

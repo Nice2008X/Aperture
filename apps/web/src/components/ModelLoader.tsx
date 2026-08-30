@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { LoadProgressEvent } from "@aperture/model-ir";
 import { listModels, streamDownload, isDownloadDone, isDownloadError, type CatalogEntry } from "@aperture/api-client";
 import { useTranslation } from "./LanguageContext.js";
-import { formatBytes, formatCount } from "../format.js";
+import { formatBytes } from "../format.js";
+import { LoadProgressBar, type UnifiedLoadProgress } from "./LoadProgressBar.js";
 
 type Quantization = "4bit" | "8bit" | undefined;
 
@@ -16,17 +17,6 @@ interface Props {
   loadProgress?: LoadProgressEvent;
   /** Drops the built-in title/subtitle and card chrome (background/border/padding) — used when this is embedded inside a panel that already provides its own header, e.g. the "load a different model" popover. */
   embedded?: boolean;
-}
-
-function loadPhaseLabel(phase: string): string {
-  switch (phase) {
-    case "loading_weights":
-      return "Loading weights onto GPU";
-    case "building_graph":
-      return "Building architecture graph";
-    default:
-      return phase;
-  }
 }
 
 type CatalogState = { status: "loading" } | { status: "ready"; entries: CatalogEntry[] } | { status: "error"; error: string };
@@ -84,9 +74,22 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
 
   const entries = catalog.status === "ready" ? catalog.entries.filter((e) => e.id !== excludeModelId) : [];
   const downloading = download.status === "downloading";
-  const downloadPct = downloading && download.totalBytes > 0 ? Math.min(100, (download.downloadedBytes / download.totalBytes) * 100) : 0;
   const modelLoading = status === "loading";
-  const loadPct = loadProgress?.total ? Math.min(100, ((loadProgress.current ?? 0) / loadProgress.total) * 100) : undefined;
+  // Download and GPU-load are sequential, never simultaneous (a download
+  // completes and calls onLoad() itself — see startDownload below) — but
+  // they stay in their own two positions below (download progress right
+  // under the repo-id form the user just submitted; load progress up near
+  // the catalog, where a catalog click or a just-finished download lands
+  // next) rather than collapsing into one shared slot, which would yank a
+  // download's progress away from where the user is actually looking.
+  // What's genuinely unified is the LoadProgressBar component itself —
+  // one bar/label/status implementation instead of two duplicated ones.
+  const loadingProgress: UnifiedLoadProgress | null = modelLoading
+    ? { phase: loadProgress?.phase ?? "loading_weights", current: loadProgress?.current, total: loadProgress?.total, unit: "count" }
+    : null;
+  const downloadProgress: UnifiedLoadProgress | null = downloading
+    ? { phase: "downloading", current: download.downloadedBytes, total: download.totalBytes || undefined, unit: "bytes" }
+    : null;
 
   return (
     <div className={"model-loader" + (embedded ? " embedded" : "")}>
@@ -97,22 +100,9 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
         </>
       )}
 
-      {modelLoading && (
+      {loadingProgress && (
         <div className="model-loader-loading-progress">
-          <div className="model-loader-loading-title">Loading model onto the GPU…</div>
-          <div className="model-loader-download-bar-track">
-            <div className="model-loader-download-bar-fill" style={loadPct !== undefined ? { width: `${loadPct}%` } : { width: "100%", opacity: 0.4 }} />
-          </div>
-          <span className="model-loader-download-status">
-            {loadProgress ? (
-              <>
-                {loadPhaseLabel(loadProgress.phase)}
-                {loadProgress.total ? ` — ${formatCount(loadProgress.current ?? 0)} / ${formatCount(loadProgress.total)}` : ""}
-              </>
-            ) : (
-              "Starting…"
-            )}
-          </span>
+          <LoadProgressBar progress={loadingProgress} />
         </div>
       )}
 
@@ -168,14 +158,9 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
           {downloading ? t("loader.downloading") : t("loader.download")}
         </button>
       </form>
-      {downloading && (
+      {downloadProgress && (
         <div className="model-loader-download-progress">
-          <div className="model-loader-download-bar-track">
-            <div className="model-loader-download-bar-fill" style={{ width: `${downloadPct}%` }} />
-          </div>
-          <span className="model-loader-download-status">
-            {download.totalBytes > 0 ? `${formatBytes(download.downloadedBytes)} / ${formatBytes(download.totalBytes)}` : "Starting…"}
-          </span>
+          <LoadProgressBar progress={downloadProgress} />
         </div>
       )}
       {download.status === "error" && <div className="model-loader-error">{download.error}</div>}

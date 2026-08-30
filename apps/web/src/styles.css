@@ -323,15 +323,21 @@ input, select { font-family: inherit; }
 }
 .model-loader-download-form button:hover:not(:disabled) { background: var(--accent-hover); }
 .model-loader-download-form button:disabled { opacity: 0.6; cursor: default; }
-.model-loader-download-progress { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.model-loader-download-bar-track { flex: 1; height: 6px; background: var(--bg-chip); border-radius: 999px; overflow: hidden; }
-.model-loader-download-bar-fill { height: 100%; background: var(--accent); transition: width 0.2s ease; }
-.model-loader-download-status { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
-
+.model-loader-download-progress { margin-top: 8px; }
 .model-loader-loading-progress { margin-bottom: 16px; padding: 12px; background: var(--bg-chip); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
-.model-loader-loading-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
-.model-loader-loading-progress .model-loader-download-bar-track { margin-bottom: 6px; }
-.model-loader-loading-progress .model-loader-download-status { white-space: normal; }
+
+/* --- Shared load/download progress bar (LoadProgressBar) --- */
+.load-progress { display: flex; flex-direction: column; gap: 6px; }
+.load-progress-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.load-progress-track { height: 6px; background: var(--bg-chip); border-radius: 999px; overflow: hidden; }
+.load-progress-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 0.2s ease; }
+.load-progress-track.indeterminate .load-progress-fill { width: 30%; animation: load-progress-indeterminate 1.2s ease-in-out infinite; }
+@keyframes load-progress-indeterminate {
+  0% { margin-left: 0%; }
+  50% { margin-left: 70%; }
+  100% { margin-left: 0%; }
+}
+.load-progress-status { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
 
 .model-loader-source-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border-hairline); }
 .model-loader-source-tabs button {
@@ -642,16 +648,25 @@ input, select { font-family: inherit; }
   align-items: center;
   gap: 24px;
   padding: 10px 16px;
+  /* Reserves room for .top-right-controls, an absolutely-positioned sibling
+     anchored to the same top-right corner — without this the Runtime group
+     (see .model-info-group:last-child) would only start shrinking once
+     already underneath those buttons instead of before reaching them. */
+  padding-right: 360px;
   background: var(--bg-surface-alt);
   border-bottom: 1px solid var(--border-subtle);
   position: relative;
-  overflow-x: auto;
 }
 .model-info-name { font-weight: 700; font-size: 14px; white-space: nowrap; }
-.model-info-stats { display: flex; gap: 20px; }
-.model-info-stat { text-align: left; white-space: nowrap; }
-.model-info-stat-value { font-weight: 600; font-size: 13px; }
-.model-info-stat-label { color: var(--text-tertiary); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.model-info-groups { display: flex; gap: 28px; min-width: 0; flex: 1 1 auto; }
+.model-info-group { flex-shrink: 0; text-align: left; white-space: nowrap; }
+.model-info-group-label { color: var(--text-tertiary); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+.model-info-group-value { font-weight: 600; font-size: 12px; }
+/* The rightmost group (Runtime, closest to .top-right-controls) is the one
+   allowed to give up space first — it shrinks and ellipsizes instead of the
+   row overflowing under the buttons or the earlier groups getting squeezed. */
+.model-info-group:last-child { flex: 1 1 auto; min-width: 60px; overflow: hidden; }
+.model-info-group:last-child .model-info-group-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- Inference panel --- */
 .inference-panel {
@@ -1214,6 +1229,30 @@ input, select { font-family: inherit; }
 .view-tabs button:hover:not(:disabled):not(.active) { color: var(--text-primary); }
 .view-tabs button.active { background: var(--bg-active); color: var(--text-primary); border-color: var(--accent); }
 .view-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.io-subtabs { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.io-subtabs button {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.io-subtabs button:hover:not(:disabled):not(.active) { color: var(--text-primary); }
+.io-subtabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.io-subtabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+.io-source-select {
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  max-width: 260px;
+}
 
 .heatmap-wrap { display: flex; flex-direction: column; gap: 6px; }
 .heatmap-canvas { border: 1px solid var(--border-default); border-radius: var(--radius-sm); image-rendering: pixelated; max-width: 480px; max-height: 300px; }
