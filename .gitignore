@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+data/models/
+# Ignore Python bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

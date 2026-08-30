@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Aperture"
+abstract: >-
+  An interactive explorer and debugger for large language model internals,
+  backed by a real GPU. A Python/PyTorch backend loads a Hugging Face
+  model's real config and weights (dense or Mixture-of-Experts, optionally
+  4-bit/8-bit quantized) and runs actual forward passes and streaming
+  generation on the GPU; a React frontend renders its architecture as a
+  navigable graph and supports tensor inspection, attention and expert-
+  routing views, logit-lens analysis, token attribution, and causal
+  interventions.
+type: software
+authors:
+  - name: "Nice2008X"
+    email: aixu2008nice@gmail.com
+repository-code: "https://github.com/Nice2008X/Aperture"
+license: MIT
+version: 0.1.0
+date-released: "2026-08-16"

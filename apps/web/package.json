@@ -1,0 +1,39 @@
+{
+  "name": "@aperture/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@aperture/api-client": "*",
+    "@aperture/adapter-gemma": "*",
+    "@aperture/adapter-glm4": "*",
+    "@aperture/adapter-gpt2": "*",
+    "@aperture/adapter-llama": "*",
+    "@aperture/adapter-mistral": "*",
+    "@aperture/adapter-olmo": "*",
+    "@aperture/adapter-phi": "*",
+    "@aperture/adapter-qwen": "*",
+    "@aperture/adapter-qwen3": "*",
+    "@aperture/hf-client": "*",
+    "@aperture/interpretability": "*",
+    "@aperture/model-ir": "*",
+    "@aperture/tensor-core": "*",
+    "@aperture/tokenizer": "*",
+    "html-to-image": "^1.11.13",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reactflow": "^11.11.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  }
+}

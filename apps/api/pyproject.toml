@@ -1,0 +1,28 @@
+[project]
+name = "aperture-api"
+version = "0.1.0"
+description = "GPU backend for Aperture: loads real LLM checkpoints, builds a normalized model graph, runs instrumented forward passes and streaming generation."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "torch>=2.5",
+  "transformers>=4.46",
+  "safetensors>=0.4",
+  "huggingface_hub>=0.26",
+  "accelerate>=1.1",
+  "pydantic>=2.9",
+  "sse-starlette>=2.1",
+  "bitsandbytes>=0.50",
+]
+
+[tool.uv]
+# CUDA 13 / aarch64 (NVIDIA GB10) needs PyTorch's own CUDA wheel index rather
+# than plain PyPI — see apps/api/README.md for the exact install command.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aperture_api"]
