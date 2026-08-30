@@ -37,6 +37,8 @@ interface Props {
   /** Whether the surrounding panels (prediction, tree, inspector, bottom) are currently collapsed to give the graph maximum space. */
   isMaxFrame: boolean;
   onToggleMaxFrame: () => void;
+  /** Fired on every zoom-level change (scroll, pinch, Controls +/-, fitView's own moves) — lets App mirror the current zoom % into the status footer without this component needing to know that footer exists. */
+  onZoomChange?: (percent: number) => void;
 }
 
 interface IRNodeData {
@@ -245,11 +247,21 @@ const LANE_GAP = 90;
 /** Minimum horizontal separation between two lanes whose vertical runs overlap — keeps concurrent detours (e.g. both block residuals, or a residual and an unrelated skip) from tracing the same line. */
 const LANE_SEPARATION = 50;
 
-export function ArchitectureGraph({ model, view, selectedId, onSelect, onEnterBlock, onExitBlock, isMaxFrame, onToggleMaxFrame }: Props) {
+export function ArchitectureGraph({ model, view, selectedId, onSelect, onEnterBlock, onExitBlock, isMaxFrame, onToggleMaxFrame, onZoomChange }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  // Starts at 100 (React Flow's own default zoom) rather than reading the
+  // instance up front — it doesn't exist yet on first render — and is kept
+  // in sync via onMove below, which React Flow fires for every pan/zoom
+  // interaction (scroll, pinch, the Controls +/- buttons, and fitView's own
+  // programmatic moves alike).
+  const [zoomPercent, setZoomPercent] = useState(100);
+  // Fires for every change regardless of which handler (onInit's first
+  // read, or onMove's ongoing pan/zoom updates below) caused it, rather
+  // than duplicating the callback at each call site.
+  useEffect(() => onZoomChange?.(zoomPercent), [zoomPercent, onZoomChange]);
   // Off by default: a "[sequence_length, 16]" label on every touched edge
   // is genuinely useful when you're chasing shapes, but it's clutter for
   // just browsing the architecture, so it stays opt-in rather than
@@ -863,7 +875,9 @@ export function ArchitectureGraph({ model, view, selectedId, onSelect, onEnterBl
         onEdgeMouseLeave={() => setHoveredEdgeId(null)}
         onInit={(instance) => {
           rfInstanceRef.current = instance;
+          setZoomPercent(Math.round(instance.getViewport().zoom * 100));
         }}
+        onMove={(_, viewport) => setZoomPercent(Math.round(viewport.zoom * 100))}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}

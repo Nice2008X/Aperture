@@ -27,6 +27,8 @@ const BOTTOM_PANEL_DEFAULT_HEIGHT = 360;
 const BOTTOM_PANEL_MIN_HEIGHT = 160;
 /** Leaves at least this much vertical space for the tree/graph/inspector row above, however tall the window is. */
 const BOTTOM_PANEL_TOP_RESERVE = 240;
+/** Shared with the status footer's generation progress fraction — a single source of truth for the cap passed to generation.generate(). */
+const GENERATION_MAX_NEW_TOKENS = 64;
 
 function computeActivationMagnitude(t: Tensor): number {
   let sum = 0;
@@ -67,6 +69,10 @@ export function App() {
   const [bottomHeight, setBottomHeight] = useLocalStorageState("panel:bottom-height", BOTTOM_PANEL_DEFAULT_HEIGHT);
   const [resizingBottom, setResizingBottom] = useState(false);
   const [predictionCollapsed, setPredictionCollapsed] = useLocalStorageState("panel:prediction-collapsed", false);
+  // Mirrors ArchitectureGraph's own on-canvas zoom badge — kept here too so
+  // the status footer can show it without either component owning the
+  // other's state.
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   const inference = useInference(state.model, state.weightProvider, state.adapter, state.tokenizer);
   const promptB = useInference(state.model, state.weightProvider, state.adapter, state.tokenizer);
@@ -142,7 +148,7 @@ export function App() {
 
   const runGeneration = (prompt: string) => {
     setPredictionCollapsed(false);
-    generation.generate(prompt, { maxNewTokens: 64, temperature: 0.7 });
+    generation.generate(prompt, { maxNewTokens: GENERATION_MAX_NEW_TOKENS, temperature: 0.7 });
   };
 
   // Drops into the same inspection UI (Prediction panel, tree, graph, every
@@ -253,6 +259,43 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   };
 
+  // Status-footer fields — all read from state this component already
+  // holds, computed here rather than inside the JSX so the render below
+  // stays about layout, not derivation.
+  const runningA = inference.state.status === "running";
+  const runningB = compareEnabled && promptB.state.status === "running";
+  const generating = generation.state.status === "streaming";
+  const footerBusy = analysisBusy || runningA || runningB || generating;
+  const footerHasError = inference.state.status === "error" || (compareEnabled && promptB.state.status === "error") || generation.state.status === "error";
+  // Only generation has a meaningful fraction to show (a fixed token cap
+  // streamed one at a time) — a plain forward pass is one atomic backend
+  // call with no partial progress to report.
+  const footerProgress = generating ? { completed: generation.state.tokens.length, total: GENERATION_MAX_NEW_TOKENS } : undefined;
+  const footerRunningLabel = generating
+    ? t("footer.generating")
+    : runningA && runningB
+      ? t("footer.runningBoth")
+      : runningB
+        ? t("footer.runningB")
+        : t("inference.running");
+  const footerStatus: { label: string; tone: "ready" | "busy" | "error" } = footerHasError
+    ? { label: t("footer.error"), tone: "error" }
+    : footerBusy
+      ? { label: analysisBusy ? t("footer.analyzing") : footerRunningLabel, tone: "busy" }
+      : { label: t("footer.ready"), tone: "ready" };
+
+  const footerBlockId = selectedId ? containingBlockId(model, selectedId) : safeView.kind === "block" ? safeView.blockId : null;
+  const footerBlockLabel = footerBlockId ? model.nodes[footerBlockId]?.name : t("footer.architectureView");
+  const footerTitle = selectedNode && footerBlockId !== selectedNode.id ? `${footerBlockLabel} › ${selectedNode.name}` : (selectedNode?.name ?? footerBlockLabel);
+  const footerTensor = selectedId ? inference.state.result?.activations[selectedId] : undefined;
+  const footerShape = footerTensor
+    ? `[${footerTensor.shape.join(" × ")}]`
+    : selectedNode?.parameters[0]
+      ? `[${selectedNode.parameters[0].logicalShape.join(" × ")}]`
+      : "—";
+  const footerDtype = footerTensor?.dtype ?? selectedNode?.parameters[0]?.dtype ?? "—";
+  const footerNorm = selectedId ? activationMagnitudeById?.[selectedId] : undefined;
+
   return (
     <div className={"app" + (analysisBusy ? " app-busy" : "") + (resizingBottom ? " app-resizing-panel" : "")}>
       <ModelInfoBar model={model} />
@@ -349,6 +392,7 @@ export function App() {
             onExitBlock={() => setView({ kind: "architecture" })}
             isMaxFrame={isMaxFrame}
             onToggleMaxFrame={toggleMaxFrame}
+            onZoomChange={setZoomPercent}
           />
         </main>
         <aside className={"pane pane-inspector" + (inspectorCollapsed ? " collapsed" : "")}>
@@ -456,6 +500,37 @@ export function App() {
           />
         )}
       </section>
+      <div className="status-footer">
+        <span className={"status-footer-dot status-footer-dot-" + footerStatus.tone} />
+        <span className="status-footer-item status-footer-status">{footerStatus.label}</span>
+        {footerBusy && footerProgress && (
+          <span
+            className="status-footer-item status-footer-progress"
+            title={t("footer.tokenProgress").replace("{completed}", String(footerProgress.completed)).replace("{total}", String(footerProgress.total))}
+          >
+            <span className="status-footer-progress-track">
+              <span className="status-footer-progress-fill" style={{ width: `${Math.round((footerProgress.completed / footerProgress.total) * 100)}%` }} />
+            </span>
+            <span className="status-footer-progress-label">
+              {footerProgress.completed}/{footerProgress.total}
+            </span>
+          </span>
+        )}
+        <span className="status-footer-sep" />
+        <span className="status-footer-item status-footer-title" title={footerTitle}>
+          {footerTitle}
+        </span>
+        <span className="status-footer-sep" />
+        <span className="status-footer-item">{footerShape}</span>
+        <span className="status-footer-item">{footerDtype}</span>
+        {footerNorm !== undefined && <span className="status-footer-item">{t("footer.norm").replace("{value}", footerNorm.toFixed(4))}</span>}
+        <span className="status-footer-sep" />
+        <span className="status-footer-item">{t("footer.zoom").replace("{percent}", String(zoomPercent))}</span>
+        <span className="status-footer-spacer" />
+        <span className="status-footer-item status-footer-compute" title={t("footer.gpuTooltip")}>
+          {t("footer.gpu")}
+        </span>
+      </div>
     </div>
   );
 }

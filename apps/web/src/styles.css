@@ -1412,3 +1412,35 @@ input, select { font-family: inherit; }
 .rank-delta { width: 70px; text-align: right; font-size: 11px; }
 .rank-delta-up { color: var(--success); }
 .rank-delta-down { color: var(--danger); }
+
+/* --- Status footer --- */
+.status-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  background: var(--bg-surface-alt);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, monospace;
+}
+.status-footer-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.status-footer-dot-ready { background: var(--success); }
+.status-footer-dot-busy { background: var(--accent); animation: status-footer-pulse 1.2s ease-in-out infinite; }
+.status-footer-dot-error { background: var(--danger); }
+@keyframes status-footer-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.status-footer-status { font-weight: 600; color: var(--text-primary); font-family: inherit; }
+.status-footer-progress { display: flex; align-items: center; gap: 5px; }
+.status-footer-progress-track { width: 64px; height: 4px; border-radius: 2px; background: var(--border-default); overflow: hidden; flex-shrink: 0; }
+.status-footer-progress-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 0.12s linear; }
+.status-footer-progress-label { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.status-footer-title { font-family: inherit; color: var(--text-primary); font-weight: 600; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+.status-footer-item { white-space: nowrap; }
+.status-footer-sep { width: 1px; height: 12px; background: var(--border-default); flex-shrink: 0; }
+.status-footer-spacer { flex: 1; }
+.status-footer-compute { color: var(--text-tertiary); cursor: help; }

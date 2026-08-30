@@ -1,12 +1,24 @@
 import type { Model, ModelEdge, NodeType } from "@aperture/model-ir";
 
+/**
+ * Pre-order traversal, children visited left-to-right in the order the
+ * adapter's graph builder actually created them — that order is what
+ * layout (and, once phase 15 lands, ELK's FIXED_ORDER ports) uses for each
+ * node's sibling placement, so getting it backwards here doesn't just
+ * reorder an internal list, it makes unrelated branches land on the wrong
+ * side of each other and can visibly cross edges a rank or two down. A
+ * stack-based DFS visits children in *reverse* push order unless each
+ * node's children are reversed before pushing — that's what the extra
+ * `.reverse()` calls below correct for; dropping either one silently
+ * reintroduces the bug.
+ */
 export function getDescendants(model: Model, id: string): string[] {
   const out: string[] = [];
-  const stack = [...model.nodes[id].children];
+  const stack = [...model.nodes[id].children].reverse();
   while (stack.length) {
     const cur = stack.pop()!;
     out.push(cur);
-    stack.push(...model.nodes[cur].children);
+    stack.push(...[...model.nodes[cur].children].reverse());
   }
   return out;
 }
