@@ -10,6 +10,17 @@ import { composeSlice, defaultWindow, parameterKey } from "../tensor.js";
 import { describeInputConstruction } from "../nodeInputs.js";
 import type { InferenceState } from "../useInference.js";
 
+/**
+ * A one-shot request to switch tabs from outside — e.g. Inspector's "View
+ * activation"/"View weights" quick actions, or its "This run" input/output
+ * links. Bump `nonce` on every request so a repeat click of the same target
+ * (after the user has since switched tabs themselves) still re-applies it.
+ */
+export type TensorSourceRequest =
+  | { value: "weights"; nonce: number }
+  | { value: "activations"; nonce: number }
+  | { value: "io"; io: "input" | "output"; sourceId?: string; nonce: number };
+
 interface Props {
   model: Model;
   weightProvider: WeightProvider;
@@ -17,8 +28,7 @@ interface Props {
   inference?: InferenceState;
   selectedTokenIndex: number | null;
   promptBInference?: InferenceState;
-  /** A one-shot request to switch the Weights/Activations source tab — e.g. from the Inspector's "View activation"/"View weights" quick actions. Bump `nonce` on every request so a repeat click of the same source still re-applies (a user may have since clicked to a different tab themselves). */
-  sourceRequest?: { value: "weights" | "activations"; nonce: number } | null;
+  sourceRequest?: TensorSourceRequest | null;
 }
 
 interface ParamEntry {
@@ -35,7 +45,7 @@ function entryKey(p: ParamEntry): string {
   return `${p.ownerId}:${parameterKey(p.ref)}`;
 }
 
-type ViewMode = "heatmap" | "matrix" | "histogram";
+type ViewMode = "heatmap" | "matrix" | "histogram" | "tokens";
 type Source = "weights" | "activations" | "io" | "compare";
 
 const MAX_MATRIX_CELLS = 128 * 128; // beyond this, the Matrix tab is disabled rather than freezing the tab
@@ -74,11 +84,17 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
     if (inference?.status === "ready") setSource("activations");
   }, [inference?.result]);
 
-  // Explicit request from outside (Inspector's quick actions) — keyed on
-  // `nonce` rather than `value` so clicking the same source again (after the
-  // user has since switched tabs themselves) still re-applies it.
+  // Explicit request from outside (Inspector's quick actions / This-run
+  // input-output links) — keyed on `nonce` rather than `value` so clicking
+  // the same target again (after the user has since switched tabs
+  // themselves) still re-applies it.
   useEffect(() => {
-    if (sourceRequest) setSource(sourceRequest.value);
+    if (!sourceRequest) return;
+    setSource(sourceRequest.value);
+    if (sourceRequest.value === "io") {
+      setIoSubTab(sourceRequest.io);
+      setIoSourceId(sourceRequest.sourceId ?? null);
+    }
   }, [sourceRequest?.nonce]);
 
   useEffect(() => {
@@ -157,11 +173,26 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const displayTensor = source === "weights" ? tensor : source === "io" ? ioTensor : activationTensor;
   const displayStats = source === "weights" ? stats : source === "io" ? ioStats : activationStats;
   const canShowMatrix = !!displayTensor && displayTensor.data.length <= MAX_MATRIX_CELLS;
+  // Only meaningful for a tensor whose leading axis is literally "one per
+  // token" — a weight tensor's rows aren't tokens. Covers both a real
+  // per-token vector (2D, e.g. a hidden state: one row per token) and a
+  // real per-token scalar (1D, e.g. Input tokens' own raw token-id tensor —
+  // there's no hidden-dim axis, but it's exactly as much "one value per
+  // token" as the 2D case is "one vector per token"); PerTokenVectors below
+  // handles both shapes the same way. Applies to both Activations (always
+  // this node's own output) and Input/Output (either side, same shape rule).
+  const canShowTokens =
+    (source === "activations" || source === "io") &&
+    !!displayTensor &&
+    (displayTensor.shape.length === 1 || displayTensor.shape.length === 2) &&
+    !!inference?.displayTokens &&
+    displayTensor.shape[0] === inference.displayTokens.length;
 
   // keep the active tab valid as the selection changes (e.g. a 1-value bias has no useful histogram)
   useEffect(() => {
     if (view === "matrix" && !canShowMatrix) setView("heatmap");
-  }, [view, canShowMatrix]);
+    if (view === "tokens" && !canShowTokens) setView("heatmap");
+  }, [view, canShowMatrix, canShowTokens]);
 
   const hasInferenceResult = inference?.status === "ready" && !!inference.result;
   const hasPromptB = promptBInference?.status === "ready" && !!promptBInference.result;
@@ -170,17 +201,32 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
     if (source !== "compare" || !selectedNode || !inference?.result || !promptBInference?.result) return null;
     const a = inference.result.activations[selectedNode.id];
     const b = promptBInference.result.activations[selectedNode.id];
-    if (!a || !b || a.shape.length !== 2 || b.shape.length !== 2) return null;
+    // Only two shapes ever reach here in practice: a real per-token vector
+    // (2D — the overwhelming majority of nodes) or a real per-token scalar
+    // (1D — Input tokens' own raw token-id tensor, the one node with no
+    // hidden-dim axis at all). Both diff the same way, one row per token,
+    // just with `cols` pinned to 1 for the 1D case — unlike RawGrid/Heatmap
+    // above, no extra "is this axis actually the token axis" check is
+    // needed here: every activation this app ever captures for a given
+    // node id is either per-token already or 2D, never an unrelated 1D
+    // vector (that ambiguity is a Weights-tab-only concern — see
+    // canShowTokens's own doc comment). Mismatched dimensionality (1D vs
+    // 2D) can't happen for the same node id across two runs of the same
+    // model, so it isn't specially handled — anything else just declines.
+    if (!a || !b || a.shape.length !== b.shape.length || (a.shape.length !== 1 && a.shape.length !== 2)) return null;
+    const is1D = a.shape.length === 1;
+    const aCols = is1D ? 1 : a.shape[1];
+    const bCols = is1D ? 1 : b.shape[1];
     const rows = Math.min(a.shape[0], b.shape[0]);
-    const cols = Math.min(a.shape[1], b.shape[1]);
-    const truncated = a.shape[0] !== b.shape[0] || a.shape[1] !== b.shape[1];
+    const cols = Math.min(aCols, bCols);
+    const truncated = a.shape[0] !== b.shape[0] || aCols !== bCols;
     const diffData = new Float64Array(rows * cols);
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        diffData[r * cols + c] = a.data[r * a.shape[1] + c] - b.data[r * b.shape[1] + c];
+        diffData[r * cols + c] = a.data[r * aCols + c] - b.data[r * bCols + c];
       }
     }
-    const diff: Tensor = { shape: [rows, cols], dtype: "F32", data: diffData };
+    const diff: Tensor = { shape: is1D ? [rows] : [rows, cols], dtype: "F32", data: diffData };
     return { a, b, diff, truncated, statsA: computeStats(a.data), statsB: computeStats(b.data), statsDiff: computeStats(diff.data) };
   }, [source, selectedNode, inference?.result, promptBInference?.result]);
 
@@ -234,7 +280,7 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
               Activations (last run)
             </button>
             <button className={source === "io" ? "active" : ""} onClick={() => setSource("io")}>
-              Input ↔ Output
+              Input/Output
             </button>
             <button className={source === "compare" ? "active" : ""} disabled={!hasPromptB} onClick={() => setSource("compare")} title={!hasPromptB ? "Run Prompt B first" : undefined}>
               Compare (A vs B)
@@ -251,9 +297,6 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
 
         {source === "io" && selectedNode && (
           <div className="io-subtabs">
-            <button className={ioSubTab === "output" ? "active" : ""} onClick={() => setIoSubTab("output")}>
-              Output
-            </button>
             <button
               className={ioSubTab === "input" ? "active" : ""}
               disabled={inputSources.length === 0}
@@ -261,6 +304,9 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
               title={inputSources.length === 0 ? "This component has no recorded input sources" : undefined}
             >
               Input
+            </button>
+            <button className={ioSubTab === "output" ? "active" : ""} onClick={() => setIoSubTab("output")}>
+              Output
             </button>
             {ioSubTab === "input" && inputSources.length > 1 && (
               <select className="io-source-select" value={activeIoSourceId ?? ""} onChange={(e) => setIoSourceId(e.target.value)}>
@@ -349,12 +395,27 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
                 <button className={view === "histogram" ? "active" : ""} onClick={() => setView("histogram")}>
                   Histogram
                 </button>
+                {canShowTokens && (
+                  <button className={view === "tokens" ? "active" : ""} onClick={() => setView("tokens")}>
+                    Per Token
+                  </button>
+                )}
               </div>
 
               {view === "heatmap" && displayTensor.shape.length === 2 && <Heatmap data={displayTensor.data} rows={displayTensor.shape[0]} cols={displayTensor.shape[1]} />}
-              {view === "heatmap" && displayTensor.shape.length === 1 && <Heatmap data={displayTensor.data} rows={1} cols={displayTensor.shape[0]} />}
-              {view === "matrix" && canShowMatrix && <RawGrid tensor={displayTensor} />}
+              {/* A 1D tensor has no inherent row/column orientation — except
+                  when its one axis *is* the token axis (canShowTokens, same
+                  predicate the Per Token tab gates on), where each value is
+                  a separate token's own value and belongs on its own row,
+                  matching the 2D case's "shape[0] = token axis = rows"
+                  convention. A generic 1D tensor with no such association
+                  (e.g. a LayerNorm bias) keeps the plain single-row layout. */}
+              {view === "heatmap" && displayTensor.shape.length === 1 && (
+                <Heatmap data={displayTensor.data} rows={canShowTokens ? displayTensor.shape[0] : 1} cols={canShowTokens ? 1 : displayTensor.shape[0]} />
+              )}
+              {view === "matrix" && canShowMatrix && <RawGrid tensor={displayTensor} cols={displayTensor.shape.length === 1 && canShowTokens ? 1 : undefined} />}
               {view === "histogram" && <Histogram stats={displayStats} />}
+              {view === "tokens" && canShowTokens && <PerTokenVectors tensor={displayTensor} tokens={inference!.displayTokens!} />}
             </div>
 
             <div className="tensor-stats">
@@ -389,13 +450,16 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
         {source === "compare" && !selectedNode && <div className="empty-hint">Select a component to compare its activation across Prompt A and Prompt B.</div>}
         {source === "compare" && selectedNode && !compare && (
           <div className="empty-hint">
-            No 2D activation was captured for "{selectedNode.name}" in both runs — try a leaf computation node (LayerNorm, a projection, the activation function, …).
+            No comparable activation was captured for "{selectedNode.name}" in both runs — try a leaf computation node (LayerNorm, a projection, the activation function, …).
           </div>
         )}
         {source === "compare" && compare && (
           <div className="compare-view">
             {compare.truncated && (
-              <div className="compare-note">Prompt A and B have different token counts here — comparing only the overlapping {compare.diff.shape[0]}×{compare.diff.shape[1]} region.</div>
+              <div className="compare-note">
+                Prompt A and B have different token counts here — comparing only the overlapping{" "}
+                {compare.diff.shape.length === 1 ? `${compare.diff.shape[0]} tokens` : `${compare.diff.shape[0]}×${compare.diff.shape[1]}`} region.
+              </div>
             )}
             <div className="compare-columns">
               <CompareColumn title="Prompt A" tensor={compare.a} stats={compare.statsA} />
@@ -410,10 +474,16 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
 }
 
 function CompareColumn({ title, tensor, stats, diverging }: { title: string; tensor: Tensor; stats: TensorStats; diverging?: boolean }) {
+  // A 1D tensor here is always a real per-token scalar (see the `compare`
+  // memo's own doc comment — Compare only ever reaches this with an
+  // activation, never a weight, so there's no "is this really the token
+  // axis" ambiguity to check) — one row per token, same convention as the
+  // main tensor-visual Heatmap's 1D-per-token case above.
+  const isRowVector = tensor.shape.length === 1;
   return (
     <div className="compare-column">
       <div className="compare-column-title">{title}</div>
-      <Heatmap data={tensor.data} rows={tensor.shape[0]} cols={tensor.shape[1]} />
+      <Heatmap data={tensor.data} rows={tensor.shape[0]} cols={isRowVector ? 1 : tensor.shape[1]} />
       <div className="compare-stats">
         <StatRow label="Mean" value={stats.mean.toFixed(4)} />
         <StatRow label="Std" value={stats.std.toFixed(4)} />
@@ -432,8 +502,53 @@ function StatRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RawGrid({ tensor }: { tensor: Tensor }) {
-  const cols = tensor.shape.length === 2 ? tensor.shape[1] : tensor.shape[0];
+// How many of a (typically 32- to several-thousand-dimensional) vector's
+// real values to print per row before truncating with "+N more" — enough to
+// get a feel for the numbers without the row wrapping across the panel.
+const PER_TOKEN_PREVIEW_DIMS = 8;
+
+/**
+ * One row per input token, each showing a prefix of that token's own real
+ * activation vector — e.g. `"cat" → [0.91, 0.12, ...] (+29 more, 32 dims)`.
+ * The plain-numbers alternative to the heatmap above: same underlying
+ * values, no color scale or stats to read, just "here's what this token's
+ * vector actually contains".
+ */
+function PerTokenVectors({ tensor, tokens }: { tensor: Tensor; tokens: string[] }) {
+  // A 1D tensor (e.g. Input tokens' own raw token-id tensor) has no hidden
+  // axis at all — treated as `hidden = 1`, so the loop below just prints
+  // that one real scalar per token instead of a truncated vector prefix.
+  const seqLen = tensor.shape[0];
+  const hidden = tensor.shape.length === 2 ? tensor.shape[1] : 1;
+  const previewCount = Math.min(PER_TOKEN_PREVIEW_DIMS, hidden);
+  return (
+    <div className="per-token-vectors">
+      {Array.from({ length: seqLen }, (_, i) => {
+        const rowStart = i * hidden;
+        const values: string[] = [];
+        for (let d = 0; d < previewCount; d++) values.push(tensor.data[rowStart + d].toFixed(4));
+        return (
+          <div key={i} className="per-token-row">
+            <span className="per-token-label">"{tokens[i] || "·"}"</span>
+            <span className="per-token-arrow">→</span>
+            <span className="per-token-vector">
+              [{values.join(", ")}
+              {hidden > previewCount ? `, …` : ""}]
+            </span>
+            {hidden > previewCount && (
+              <span className="per-token-dims">
+                +{hidden - previewCount} more, {hidden} dims
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RawGrid({ tensor, cols: colsOverride }: { tensor: Tensor; cols?: number }) {
+  const cols = colsOverride ?? (tensor.shape.length === 2 ? tensor.shape[1] : tensor.shape[0]);
   return (
     <div className="raw-grid-scroll">
       <table className="raw-grid">
@@ -442,7 +557,7 @@ function RawGrid({ tensor }: { tensor: Tensor }) {
             <tr key={r}>
               {Array.from({ length: cols }, (_, c) => {
                 const v = tensor.data[r * cols + c];
-                return <td key={c}>{v.toFixed(3)}</td>;
+                return <td key={c}>{v.toFixed(4)}</td>;
               })}
             </tr>
           ))}

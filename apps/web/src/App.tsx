@@ -14,7 +14,7 @@ import { ModelInfoBar } from "./components/ModelInfoBar.js";
 import { ModelTree } from "./components/ModelTree.js";
 import { ArchitectureGraph, type GraphView } from "./components/ArchitectureGraph.js";
 import { Inspector } from "./components/Inspector.js";
-import { TensorExplorer } from "./components/TensorExplorer.js";
+import { TensorExplorer, type TensorSourceRequest } from "./components/TensorExplorer.js";
 import { InferencePanel } from "./components/InferencePanel.js";
 import { PredictionPanel } from "./components/PredictionPanel.js";
 import { LogitLensPanel } from "./components/LogitLensPanel.js";
@@ -29,6 +29,19 @@ const BOTTOM_PANEL_MIN_HEIGHT = 160;
 const BOTTOM_PANEL_TOP_RESERVE = 240;
 /** Shared with the status footer's generation progress fraction — a single source of truth for the cap passed to generation.generate(). */
 const GENERATION_MAX_NEW_TOKENS = 64;
+
+const TREE_PANEL_DEFAULT_WIDTH = 260;
+// Below this, tree rows (indented 14px per depth) and long node names start
+// truncating illegibly rather than just looking cramped.
+const TREE_PANEL_MIN_WIDTH = 160;
+const INSPECTOR_PANEL_DEFAULT_WIDTH = 320;
+// Below this, the Inspector's io-rows (a label and a monospace value on one
+// line — see .io-row) start wrapping instead of staying legible.
+const INSPECTOR_PANEL_MIN_WIDTH = 220;
+/** Leaves at least this much horizontal space for the graph pane, however wide the tree/inspector panels are dragged. */
+const GRAPH_PANEL_MIN_WIDTH = 320;
+/** The two 6px resize handles plus each pane's own 1px border (×3 panes) — real chrome the max-width math below would otherwise ignore, letting the graph pane end up a bit under GRAPH_PANEL_MIN_WIDTH rather than at least that wide. */
+const PANE_CHROME_ALLOWANCE = 24;
 
 function computeActivationMagnitude(t: Tensor): number {
   let sum = 0;
@@ -60,11 +73,15 @@ export function App() {
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("tensor");
   const [analysisBusy, setAnalysisBusy] = useState(false);
-  const [tensorSourceRequest, setTensorSourceRequest] = useState<{ value: "weights" | "activations"; nonce: number } | null>(null);
+  const [tensorSourceRequest, setTensorSourceRequest] = useState<TensorSourceRequest | null>(null);
   /** Which prompt's tokens Token Attribution attributes — controlled here (rather than as the panel's own local state) so the Prediction panel's "Why?" link can request the matching side instead of always landing back on Prompt A. */
   const [attributionSource, setAttributionSource] = useState<"A" | "B">("A");
   const [treeCollapsed, setTreeCollapsed] = useLocalStorageState("panel:tree-collapsed", false);
   const [inspectorCollapsed, setInspectorCollapsed] = useLocalStorageState("panel:inspector-collapsed", false);
+  const [treeWidth, setTreeWidth] = useLocalStorageState("panel:tree-width", TREE_PANEL_DEFAULT_WIDTH);
+  const [inspectorWidth, setInspectorWidth] = useLocalStorageState("panel:inspector-width", INSPECTOR_PANEL_DEFAULT_WIDTH);
+  const [resizingTree, setResizingTree] = useState(false);
+  const [resizingInspector, setResizingInspector] = useState(false);
   const [bottomCollapsed, setBottomCollapsed] = useLocalStorageState("panel:bottom-collapsed", false);
   const [bottomHeight, setBottomHeight] = useLocalStorageState("panel:bottom-height", BOTTOM_PANEL_DEFAULT_HEIGHT);
   const [resizingBottom, setResizingBottom] = useState(false);
@@ -177,6 +194,14 @@ export function App() {
     setTensorSourceRequest({ value, nonce: Date.now() });
   };
 
+  // Inspector's "This run" input/output links — jumps to Tensor Explorer's
+  // Input/Output tab, pre-selected to whichever side (and, for an input,
+  // which upstream source) the user actually clicked.
+  const requestTensorIO = (io: "input" | "output", sourceId?: string) => {
+    selectBottomTab("tensor");
+    setTensorSourceRequest({ value: "io", io, sourceId, nonce: Date.now() });
+  };
+
   const viewWhy = (source: "A" | "B") => {
     setAttributionSource(source);
     selectBottomTab("attribution");
@@ -259,6 +284,52 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   };
 
+  // Drag-to-resize for the tree and inspector panels — same pattern as the
+  // bottom panel above, mirrored horizontally. The max clamp for each also
+  // accounts for the *other* side panel's current width (full or collapsed
+  // to its 36px strip), so dragging one out doesn't silently starve the
+  // graph pane below GRAPH_PANEL_MIN_WIDTH just because the other panel
+  // also happens to be wide.
+  const handleTreeResizeStart = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = treeWidth;
+    setResizingTree(true);
+    const onMove = (moveEvent: MouseEvent) => {
+      const inspectorSpace = inspectorCollapsed ? 36 : inspectorWidth;
+      const maxWidth = Math.max(TREE_PANEL_MIN_WIDTH, window.innerWidth - inspectorSpace - GRAPH_PANEL_MIN_WIDTH - PANE_CHROME_ALLOWANCE);
+      const next = startWidth + (moveEvent.clientX - startX);
+      setTreeWidth(Math.min(maxWidth, Math.max(TREE_PANEL_MIN_WIDTH, Math.round(next))));
+    };
+    const onUp = () => {
+      setResizingTree(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const handleInspectorResizeStart = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = inspectorWidth;
+    setResizingInspector(true);
+    const onMove = (moveEvent: MouseEvent) => {
+      const treeSpace = treeCollapsed ? 36 : treeWidth;
+      const maxWidth = Math.max(INSPECTOR_PANEL_MIN_WIDTH, window.innerWidth - treeSpace - GRAPH_PANEL_MIN_WIDTH - PANE_CHROME_ALLOWANCE);
+      const next = startWidth + (startX - moveEvent.clientX);
+      setInspectorWidth(Math.min(maxWidth, Math.max(INSPECTOR_PANEL_MIN_WIDTH, Math.round(next))));
+    };
+    const onUp = () => {
+      setResizingInspector(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   // Status-footer fields — all read from state this component already
   // holds, computed here rather than inside the JSX so the render below
   // stays about layout, not derivation.
@@ -297,7 +368,14 @@ export function App() {
   const footerNorm = selectedId ? activationMagnitudeById?.[selectedId] : undefined;
 
   return (
-    <div className={"app" + (analysisBusy ? " app-busy" : "") + (resizingBottom ? " app-resizing-panel" : "")}>
+    <div
+      className={
+        "app" +
+        (analysisBusy ? " app-busy" : "") +
+        (resizingBottom ? " app-resizing-panel" : "") +
+        (resizingTree || resizingInspector ? " app-resizing-col-panel" : "")
+      }
+    >
       <ModelInfoBar model={model} />
       <div className="top-right-controls">
         <div className="control-group">
@@ -361,7 +439,10 @@ export function App() {
         </div>
       )}
       <div className="app-body">
-        <aside className={"pane pane-tree" + (treeCollapsed ? " collapsed" : "")}>
+        <aside
+          className={"pane pane-tree" + (treeCollapsed ? " collapsed" : "") + (resizingTree ? " resizing" : "")}
+          style={treeCollapsed ? undefined : { width: treeWidth }}
+        >
           <div className="pane-header">
             {!treeCollapsed && <span className="pane-header-title">{t("app.modelTree")}</span>}
             <button className="pane-collapse-btn" onClick={() => setTreeCollapsed((v) => !v)} title={treeCollapsed ? t("app.expandTree") : t("app.collapseTree")}>
@@ -382,6 +463,13 @@ export function App() {
             </div>
           )}
         </aside>
+        {!treeCollapsed && (
+          <div
+            className={"pane-resize-handle pane-resize-handle-vertical" + (resizingTree ? " resizing" : "")}
+            onMouseDown={handleTreeResizeStart}
+            title={t("app.resizePanel")}
+          />
+        )}
         <main className="pane pane-graph">
           <ArchitectureGraph
             model={model}
@@ -395,7 +483,17 @@ export function App() {
             onZoomChange={setZoomPercent}
           />
         </main>
-        <aside className={"pane pane-inspector" + (inspectorCollapsed ? " collapsed" : "")}>
+        {!inspectorCollapsed && (
+          <div
+            className={"pane-resize-handle pane-resize-handle-vertical" + (resizingInspector ? " resizing" : "")}
+            onMouseDown={handleInspectorResizeStart}
+            title={t("app.resizePanel")}
+          />
+        )}
+        <aside
+          className={"pane pane-inspector" + (inspectorCollapsed ? " collapsed" : "") + (resizingInspector ? " resizing" : "")}
+          style={inspectorCollapsed ? undefined : { width: inspectorWidth }}
+        >
           <div className="pane-header">
             <button className="pane-collapse-btn" onClick={() => setInspectorCollapsed((v) => !v)} title={inspectorCollapsed ? t("app.expandInspector") : t("app.collapseInspector")}>
               {inspectorCollapsed ? "‹" : "›"}
@@ -413,6 +511,12 @@ export function App() {
                 activationMagnitude={selectedId ? activationMagnitudeById?.[selectedId] : undefined}
                 onViewActivation={() => requestTensorSource("activations")}
                 onViewWeights={() => requestTensorSource("weights")}
+                onViewInput={(sourceId) => requestTensorIO("input", sourceId)}
+                onViewOutput={() => requestTensorIO("output")}
+                onDeselect={() => setSelectedId(null)}
+                inferenceResult={inference.state.result}
+                tokenizer={state.tokenizer}
+                elapsedMs={inference.state.elapsedMs}
               />
             </div>
           )}

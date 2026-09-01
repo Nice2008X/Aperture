@@ -2,9 +2,9 @@ import type { Model, ModelEdge, NodeType } from "@aperture/model-ir";
 
 /**
  * Pre-order traversal, children visited left-to-right in the order the
- * adapter's graph builder actually created them — that order is what
- * layout (and, once phase 15 lands, ELK's FIXED_ORDER ports) uses for each
- * node's sibling placement, so getting it backwards here doesn't just
+ * adapter's graph builder actually created them — that order is what ELK's
+ * FIXED_ORDER ports (see elkLayout.ts, phase 15) use for each node's sibling
+ * placement, so getting it backwards here doesn't just
  * reorder an internal list, it makes unrelated branches land on the wrong
  * side of each other and can visibly cross edges a rank or two down. A
  * stack-based DFS visits children in *reverse* push order unless each

@@ -381,18 +381,6 @@ input, select { font-family: inherit; }
 .model-loader-local-form > button:hover:not(:disabled) { background: var(--accent-hover); }
 .model-loader-local-form > button:disabled { opacity: 0.6; cursor: default; }
 
-.save-model {
-  background: var(--bg-chip);
-  border: 1px solid var(--border-default);
-  color: var(--accent-text);
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  transition: background-color var(--transition-fast);
-}
-.save-model:hover:not(:disabled) { background: var(--bg-hover); }
-.save-model:disabled { opacity: 0.5; cursor: default; }
-
 /* --- App shell --- */
 .app { height: 100%; position: relative; display: flex; flex-direction: column; }
 
@@ -463,94 +451,6 @@ input, select { font-family: inherit; }
   border-radius: var(--radius-sm);
 }
 .load-model-panel-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-/* --- Save model confirmation dialog --- */
-.save-model-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.save-model-dialog {
-  width: 420px;
-  max-width: calc(100vw - 32px);
-  padding: 16px;
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-elevated);
-}
-.save-model-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.save-model-dialog-close {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: 18px;
-  line-height: 1;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-}
-.save-model-dialog-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-.save-model-dialog-desc { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; }
-.save-model-dialog-files {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-  border: 1px solid var(--border-hairline);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-.save-model-dialog-files li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  font-size: 12px;
-}
-.save-model-dialog-files li + li { border-top: 1px solid var(--border-hairline); }
-.save-model-dialog-filename { font-family: ui-monospace, monospace; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.save-model-dialog-filesize { flex-shrink: 0; color: var(--text-tertiary); }
-.save-model-dialog-total {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 14px;
-  padding: 0 2px;
-}
-.save-model-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.save-model-dialog-cancel,
-.save-model-dialog-confirm {
-  padding: 8px 14px;
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  font-weight: 600;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
-}
-.save-model-dialog-cancel {
-  background: none;
-  border: 1px solid var(--border-default);
-  color: var(--text-secondary);
-}
-.save-model-dialog-cancel:hover { background: var(--bg-hover); border-color: var(--border-strong); }
-.save-model-dialog-confirm {
-  background: var(--accent);
-  border: none;
-  color: white;
-}
-.save-model-dialog-confirm:hover { background: var(--accent-hover); }
 
 /* --- Settings button + panel --- */
 .settings-toggle-btn {
@@ -710,9 +610,22 @@ input, select { font-family: inherit; }
   border-radius: var(--radius-sm);
   font-family: ui-monospace, monospace;
   font-size: 12px;
+  /* Preserves a token's real leading/trailing space (e.g. " dog") instead of
+     collapsing it away — matters for the bare-text chips other panels
+     (LogitLensPanel) render directly as this button's own text, not just
+     the wrapped .token-chip-text span below. */
   white-space: pre;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
+/* The vocabulary index this token was actually looked up at — see
+   InferencePanel's tokenIds. Deliberately its own muted line rather than
+   inline with the text: it's a secondary fact ("here's the number"), not
+   part of the token's own label. */
+.token-chip-id { font-size: 9px; color: var(--text-tertiary); line-height: 1; }
 .token-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
 .token-chip.selected { background: var(--bg-active); border-color: var(--accent); color: var(--text-primary); }
 .token-chip-readonly { cursor: default; opacity: 0.75; }
@@ -834,7 +747,11 @@ input, select { font-family: inherit; }
   overflow: hidden;
   transition: height var(--transition-panel);
 }
-.pane-tensor.resizing { transition: none; }
+.pane-tensor.resizing,
+.pane-tree.resizing,
+.pane-inspector.resizing {
+  transition: none;
+}
 
 .pane-tree.collapsed { width: 36px; }
 .pane-inspector.collapsed { width: 36px; }
@@ -859,7 +776,28 @@ input, select { font-family: inherit; }
 .pane-tensor.resizing .pane-tensor-resize-handle::after {
   background: var(--accent);
 }
+
+/* --- Tree/Inspector drag-to-resize handles (vertical, between panes) --- */
+.pane-resize-handle-vertical {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+}
+.pane-resize-handle-vertical::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  transition: background-color var(--transition-fast);
+}
+.pane-resize-handle-vertical:hover::after,
+.pane-resize-handle-vertical.resizing::after {
+  background: var(--accent);
+}
 .app-resizing-panel { cursor: row-resize; user-select: none; }
+.app-resizing-col-panel { cursor: col-resize; user-select: none; }
 
 /* --- Pane header + collapse control (shared by tree / inspector) --- */
 .pane-header {
@@ -1092,6 +1030,17 @@ input, select { font-family: inherit; }
 
 /* --- Inspector --- */
 .inspector { padding: 14px; overflow-y: auto; height: 100%; }
+.inspector-back-link {
+  display: block;
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: 10px;
+}
+.inspector-back-link:hover { text-decoration: underline; }
 .inspector-title {
   border-left: 3px solid;
   padding-left: 10px;
@@ -1137,6 +1086,22 @@ input, select { font-family: inherit; }
   white-space: pre-wrap;
 }
 .input-source-list { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.inspector-io-group { margin-bottom: 10px; }
+.inspector-io-group-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); margin-bottom: 4px; }
+.inspector-io-item + .inspector-io-item { margin-top: 8px; }
+.inspector-io-item-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-tensor-empty { margin: 0; font-size: 11px; color: var(--text-tertiary); font-style: italic; }
+/* Deep-links to Tensor Explorer's Input/Output tab — same plain-link
+   language as .inspector-back-link elsewhere. */
+.inspector-io-link {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0;
+}
+.inspector-io-link:hover { text-decoration: underline; }
 .io-row {
   display: flex;
   justify-content: space-between;
@@ -1261,6 +1226,20 @@ input, select { font-family: inherit; }
 .raw-grid { border-collapse: collapse; font-size: 10px; font-family: ui-monospace, monospace; }
 .raw-grid td { border: 1px solid var(--border-hairline); padding: 2px 5px; text-align: right; color: var(--text-secondary); }
 
+.per-token-vectors { display: flex; flex-direction: column; gap: 4px; max-width: 560px; max-height: 320px; overflow-y: auto; }
+.per-token-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+.per-token-label { font-family: ui-monospace, monospace; font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
+.per-token-arrow { color: var(--text-tertiary); flex-shrink: 0; }
+.per-token-vector { font-family: ui-monospace, monospace; color: var(--accent-soft-text); }
+.per-token-dims { color: var(--text-tertiary); font-size: 10px; flex-shrink: 0; }
+
 .tensor-stats { min-width: 220px; }
 .stat-row { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; border-bottom: 1px solid var(--border-hairline); }
 .stat-label { color: var(--text-secondary); }
@@ -1270,6 +1249,17 @@ input, select { font-family: inherit; }
 .histogram-bar { flex: 1; background: var(--accent); min-height: 1px; border-radius: 1px 1px 0 0; }
 
 .empty-hint { color: var(--text-tertiary); font-size: 12px; padding: 16px; }
+
+/* --- Inspector: no-selection / root-node model overview --- */
+.inspector-overview-title { font-weight: 700; font-size: 14px; margin-bottom: 14px; }
+.overview-structure-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 3px 0; }
+.overview-structure-label { width: 40%; flex-shrink: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-structure-value { color: var(--text-primary); font-family: ui-monospace, monospace; flex-shrink: 0; }
+/* Overrides .io-shape's flex-shrink: 0 — the decoded-prompt preview is the
+   one "Last run" value that can be arbitrarily long, so unlike every
+   fixed-width shape/count value next to it, it needs to actually shrink and
+   ellipsize instead of overflowing the panel. */
+.overview-prompt-preview { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
 
 /* --- Background-job indicators (Logit Lens / Token Attribution / Experiment) --- */
 .loading-hint { display: flex; align-items: center; gap: 10px; color: var(--text-tertiary); font-size: 12px; padding: 16px; }

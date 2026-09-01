@@ -222,6 +222,12 @@ def run_forward(loaded: LoadedModel, token_ids: list[int], interventions: list[d
 
     try:
         ids_tensor = torch.tensor([token_ids], device=loaded.model.device)
+        # The graph's "input" node (graph_builder's Input tokens) has no
+        # real nn.Module to hook — it's the raw token-id sequence the model
+        # call is given, not a module's output — so without this it would
+        # never appear in `activations` at all, and Token Embedding's own
+        # "Input" tab would wrongly read as nothing having been captured.
+        activations["input"] = ids_tensor.detach()
         with torch.no_grad():
             out = loaded.model(ids_tensor, output_attentions=True, use_cache=False)
     finally:

@@ -154,10 +154,10 @@ packages/
                           not a full forward pass anymore, see below.
   tokenizer/              From-scratch BPE tokenizer reading a loaded model's real
                           tokenizer.json (served by the backend's static mount).
-  hf-client/              Legacy: a HF-CDN metadata/weight fetcher from Aperture's
-                          original fully-client-side design (see below).
-  model-adapters/         Legacy: 8 hand-written per-architecture forward-pass engines
-                          from the original fully-client-side design (see below).
+  hf-client/              Legacy-leaning: still provides peekModelType (a no-op for a
+                          `backend` source) and backs packages/tokenizer's fetch, but
+                          most of its original HF-CDN weight-fetching/caching logic
+                          from Aperture's fully-client-side design is unreachable now.
 ```
 
 ### Legacy packages
@@ -165,13 +165,18 @@ packages/
 Aperture started as a fully client-side app that parsed `config.json` +
 `.safetensors` and ran the forward pass itself in the browser with a
 hand-written TypeScript numeric engine — one adapter package per
-architecture family (`packages/model-adapters/*`, plus the
-weight-fetching/parsing half of `packages/hf-client` and
-`packages/tensor-core`'s safetensors parser). That's been replaced by the
-GPU backend described above; `apps/web/src/adapters.ts` now wires in only
-one `BackendAdapter`, and none of `packages/model-adapters/*` is imported
-anywhere anymore. Those packages are still on disk (not yet deleted) but
-are dead code as of this version.
+architecture family (`packages/model-adapters/*`, plus most of the
+weight-fetching/parsing half of `packages/hf-client`). That's been
+replaced by the GPU backend described above; `apps/web/src/adapters.ts`
+now wires in only one `BackendAdapter`. `packages/model-adapters/*` (all 10
+per-architecture packages, confirmed zero imports anywhere) has since been
+deleted, along with its workspace entry in the root `package.json` and its
+9 direct dependencies in `apps/web/package.json`. `packages/hf-client` is
+still a real, imported dependency (`peekModelType` in `useModel.ts`,
+`fetchJson`/`fetchArrayBuffer` backing `packages/tokenizer`'s real
+`tokenizer.json` fetch) — trimming its own unreachable-in-practice HF-CDN
+fetch/cache internals is a separate, more surgical cleanup than a
+zero-references package deletion, and hasn't been done.
 
 ## Getting started
 
@@ -268,9 +273,10 @@ reimplementation of the same idea.
 - No persistence: downloaded models stay in `data/models/`, but
   experiments, comparisons, and logit-lens runs live only in server
   memory for the current run cache (last 5 runs) / browser tab state.
-- `packages/model-adapters/*` and the weight-fetching half of
-  `packages/hf-client`/`packages/tensor-core` are unused legacy code, not
-  yet deleted (see [Legacy packages](#legacy-packages)).
+- Most of `packages/hf-client`'s original HF-CDN weight-fetching/caching
+  logic is unreachable in practice (a `backend`-sourced model never needs
+  it) but hasn't been trimmed out, since it's still a real, imported
+  dependency, not dead code (see [Legacy packages](#legacy-packages)).
 
 ## Credits
 
