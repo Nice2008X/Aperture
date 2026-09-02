@@ -73,6 +73,13 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const [windowRanges, setWindowRanges] = useState<{ start: number; end: number }[] | null>(null);
   const [view, setView] = useState<ViewMode>("heatmap");
   const [source, setSource] = useState<Source>("weights");
+  // Which prompt's own activation the Activations/Input-Output tabs show —
+  // independent of Compare, which always shows both at once (plus their
+  // diff) rather than one at a time at full detail (Matrix/Histogram, full
+  // stats). Reset to A whenever B's result goes away (Compare disabled, or
+  // B re-run and not yet ready again) so this doesn't silently keep
+  // pointing at a stale or now-absent result.
+  const [activationSource, setActivationSource] = useState<"A" | "B">("A");
   // Input/Output tab's own sub-state: which side (defaults to Output — the
   // node's own result, the more central artifact), and for Input, which
   // upstream source when a node has more than one (e.g. a Residual Add).
@@ -116,6 +123,16 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   const inputSources = useMemo(() => (selectedNode ? describeInputConstruction(model, selectedNode).sources : []), [model, selectedNode]);
   const activeIoSourceId = ioSourceId ?? inputSources[0]?.sourceId ?? null;
 
+  const hasPromptB = promptBInference?.status === "ready" && !!promptBInference.result;
+
+  // Falls back to A automatically once B's result is gone — otherwise this
+  // tab would keep pointing at a source that no longer has anything to show.
+  useEffect(() => {
+    if (activationSource === "B" && !hasPromptB) setActivationSource("A");
+  }, [activationSource, hasPromptB]);
+
+  const activeInference = activationSource === "B" ? promptBInference : inference;
+
   const selectedEntry = useMemo(
     () => allParams.find((p) => entryKey(p) === selectedKey) ?? null,
     [allParams, selectedKey]
@@ -145,19 +162,21 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
     };
   }, [source, selectedEntry, windowRanges, weightProvider]);
 
-  const activationTensor = source === "activations" && selectedNode ? inference?.result?.activations[selectedNode.id] ?? null : null;
+  const activationTensor = source === "activations" && selectedNode ? activeInference?.result?.activations[selectedNode.id] ?? null : null;
   const activationStats = useMemo(() => (activationTensor ? computeStats(activationTensor.data) : null), [activationTensor]);
-  const attentionTensor = source === "activations" && selectedNode ? inference?.result?.attentionWeights[selectedNode.id] ?? null : null;
-  const routerWeightsTensor = source === "activations" && selectedNode ? inference?.result?.routerWeights?.[selectedNode.id] ?? null : null;
-  const expertAssignmentTensor = source === "activations" && selectedNode ? inference?.result?.expertAssignment?.[selectedNode.id] ?? null : null;
+  const attentionTensor = source === "activations" && selectedNode ? activeInference?.result?.attentionWeights[selectedNode.id] ?? null : null;
+  const routerWeightsTensor = source === "activations" && selectedNode ? activeInference?.result?.routerWeights?.[selectedNode.id] ?? null : null;
+  const expertAssignmentTensor = source === "activations" && selectedNode ? activeInference?.result?.expertAssignment?.[selectedNode.id] ?? null : null;
 
   // Both sides of the Input/Output tab read straight out of the already-
   // fully-captured bulk run (no fetch needed — see PLAN.md phase 2's
   // encode_bulk_run design), unlike Weights' async windowed load above.
   // "Output" is this node's own capture, same value the Activations tab
   // shows; "Input" looks up whichever upstream source is currently picked.
-  const ioOutputTensor = source === "io" && selectedNode ? inference?.result?.activations[selectedNode.id] ?? null : null;
-  const ioInputTensor = source === "io" && activeIoSourceId ? inference?.result?.activations[activeIoSourceId] ?? null : null;
+  // Both read from `activeInference` too — Prompt B's Input/Output tab
+  // should show Prompt B's own values, same as Activations.
+  const ioOutputTensor = source === "io" && selectedNode ? activeInference?.result?.activations[selectedNode.id] ?? null : null;
+  const ioInputTensor = source === "io" && activeIoSourceId ? activeInference?.result?.activations[activeIoSourceId] ?? null : null;
   const ioTensor = ioSubTab === "output" ? ioOutputTensor : ioInputTensor;
   const ioStats = useMemo(() => (ioTensor ? computeStats(ioTensor.data) : null), [ioTensor]);
 
@@ -185,8 +204,8 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
     (source === "activations" || source === "io") &&
     !!displayTensor &&
     (displayTensor.shape.length === 1 || displayTensor.shape.length === 2) &&
-    !!inference?.displayTokens &&
-    displayTensor.shape[0] === inference.displayTokens.length;
+    !!activeInference?.displayTokens &&
+    displayTensor.shape[0] === activeInference.displayTokens.length;
 
   // keep the active tab valid as the selection changes (e.g. a 1-value bias has no useful histogram)
   useEffect(() => {
@@ -195,7 +214,6 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
   }, [view, canShowMatrix, canShowTokens]);
 
   const hasInferenceResult = inference?.status === "ready" && !!inference.result;
-  const hasPromptB = promptBInference?.status === "ready" && !!promptBInference.result;
 
   const compare = useMemo(() => {
     if (source !== "compare" || !selectedNode || !inference?.result || !promptBInference?.result) return null;
@@ -325,6 +343,17 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
           </div>
         )}
 
+        {(source === "activations" || source === "io") && hasPromptB && (
+          <div className="source-tabs activation-source-tabs">
+            <button className={activationSource === "A" ? "active" : ""} onClick={() => setActivationSource("A")}>
+              Prompt A
+            </button>
+            <button className={activationSource === "B" ? "active" : ""} onClick={() => setActivationSource("B")}>
+              Prompt B
+            </button>
+          </div>
+        )}
+
         {source === "weights" && ref && (
           <div className="tensor-header">
             <div className="tensor-title">
@@ -346,11 +375,14 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
         )}
         {source === "activations" && selectedNode && activationTensor && (
           <div className="tensor-header">
-            <div className="tensor-title">{selectedNode.name} — activation</div>
+            <div className="tensor-title">
+              {selectedNode.name} — activation
+              {hasPromptB && <span className="tensor-title-prompt-tag">{activationSource === "A" ? "Prompt A" : "Prompt B"}</span>}
+            </div>
             <div className="tensor-meta">
               <span>Shape {activationTensor.shape.join(" × ")}</span>
               <span>dtype {activationTensor.dtype}</span>
-              <span>from prompt: "{inference?.displayTokens?.join("")}"</span>
+              <span>from prompt: "{activeInference?.displayTokens?.join("")}"</span>
             </div>
           </div>
         )}
@@ -358,11 +390,12 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
           <div className="tensor-header">
             <div className="tensor-title">
               {selectedNode.name} — {ioSubTab === "output" ? "output" : `input (${inputSources.find((s) => s.sourceId === activeIoSourceId)?.label ?? "?"})`}
+              {hasPromptB && <span className="tensor-title-prompt-tag">{activationSource === "A" ? "Prompt A" : "Prompt B"}</span>}
             </div>
             <div className="tensor-meta">
               <span>Shape {ioTensor.shape.join(" × ")}</span>
               <span>dtype {ioTensor.dtype}</span>
-              <span>from prompt: "{inference?.displayTokens?.join("")}"</span>
+              <span>from prompt: "{activeInference?.displayTokens?.join("")}"</span>
             </div>
           </div>
         )}
@@ -415,7 +448,7 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
               )}
               {view === "matrix" && canShowMatrix && <RawGrid tensor={displayTensor} cols={displayTensor.shape.length === 1 && canShowTokens ? 1 : undefined} />}
               {view === "histogram" && <Histogram stats={displayStats} />}
-              {view === "tokens" && canShowTokens && <PerTokenVectors tensor={displayTensor} tokens={inference!.displayTokens!} />}
+              {view === "tokens" && canShowTokens && <PerTokenVectors tensor={displayTensor} tokens={activeInference!.displayTokens!} />}
             </div>
 
             <div className="tensor-stats">
@@ -435,14 +468,14 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
           </div>
         )}
 
-        {source === "activations" && attentionTensor && inference?.displayTokens && (
-          <AttentionView attentionWeights={attentionTensor} tokens={inference.displayTokens} queryTokenIndex={selectedTokenIndex ?? inference.displayTokens.length - 1} />
+        {source === "activations" && attentionTensor && activeInference?.displayTokens && (
+          <AttentionView attentionWeights={attentionTensor} tokens={activeInference.displayTokens} queryTokenIndex={selectedTokenIndex ?? activeInference.displayTokens.length - 1} />
         )}
-        {source === "activations" && routerWeightsTensor && expertAssignmentTensor && inference?.displayTokens && (
+        {source === "activations" && routerWeightsTensor && expertAssignmentTensor && activeInference?.displayTokens && (
           <ExpertRoutingView
             routerWeights={routerWeightsTensor}
             expertAssignment={expertAssignmentTensor}
-            tokens={inference.displayTokens}
+            tokens={activeInference.displayTokens}
             numExperts={typeof selectedNode?.metadata.numExperts === "number" ? selectedNode.metadata.numExperts : 0}
           />
         )}

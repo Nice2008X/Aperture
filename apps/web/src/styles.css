@@ -1167,9 +1167,14 @@ input, select { font-family: inherit; }
 .source-tabs button:hover:not(:disabled):not(.active) { color: var(--text-primary); }
 .source-tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .source-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Which prompt's own values Activations/Input-Output show — its own small
+   row directly above the tensor header, only when a Prompt B result
+   actually exists to switch to. */
+.activation-source-tabs { margin-top: -6px; }
 
 .tensor-header { margin-bottom: 8px; }
-.tensor-title { font-family: ui-monospace, monospace; font-weight: 600; font-size: 13px; }
+.tensor-title { font-family: ui-monospace, monospace; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.tensor-title-prompt-tag { font-family: sans-serif; font-size: 10px; font-weight: 600; color: var(--text-tertiary); background: var(--bg-hover); border-radius: var(--radius-sm); padding: 1px 6px; }
 .tensor-meta { display: flex; gap: 14px; font-size: 11px; color: var(--text-secondary); margin-top: 4px; flex-wrap: wrap; }
 .loaded-badge { color: var(--success); }
 
