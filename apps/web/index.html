@@ -3,7 +3,46 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aperture</title>
+    <title>Aperture — GPU-Backed LLM Internals Explorer</title>
+    <meta
+      name="description"
+      content="An interactive explorer and debugger for real large language model internals, backed by a real GPU. Paste a Hugging Face repo id; the backend loads it onto the GPU with actual PyTorch + transformers, and the frontend renders its architecture as a navigable graph, runs real forward passes and streaming generation, inspects every weight and activation, and runs causal interventions — dense and Mixture-of-Experts architectures alike."
+    />
+    <link rel="canonical" href="https://nice2008x.github.io/Aperture/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0b0d13" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://nice2008x.github.io/Aperture/" />
+    <meta property="og:title" content="Aperture — GPU-Backed LLM Internals Explorer" />
+    <meta
+      property="og:description"
+      content="Load a real Hugging Face model onto a real GPU and inspect its actual architecture, weights, and activations live — run forward passes, streaming generation, and causal interventions, dense and MoE alike."
+    />
+    <meta property="og:image" content="https://nice2008x.github.io/Aperture/social-preview.png" />
+    <meta property="og:image:width" content="1600" />
+    <meta property="og:image:height" content="980" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Aperture — GPU-Backed LLM Internals Explorer" />
+    <meta
+      name="twitter:description"
+      content="Load a real Hugging Face model onto a real GPU and inspect its actual architecture, weights, and activations live — run forward passes, streaming generation, and causal interventions, dense and MoE alike."
+    />
+    <meta name="twitter:image" content="https://nice2008x.github.io/Aperture/social-preview.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Aperture",
+        "description": "An interactive explorer and debugger for real large language model internals, backed by a real GPU — architecture graphs, live forward passes, weight/activation inspection, and causal interventions for dense and Mixture-of-Experts models alike.",
+        "url": "https://nice2008x.github.io/Aperture/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any (web-based, GPU backend required)"
+      }
+    </script>
+
     <script>
       // Applied before React mounts (and before first paint) so switching
       // themes across reloads never flashes the previous/default theme.

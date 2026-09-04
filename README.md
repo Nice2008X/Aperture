@@ -18,11 +18,20 @@ whatever tensor you're currently looking at.
 
 ![Screenshot of Aperture: the model tree, a transformer block's Attention internals with a scope box grouping its Q/K/V/Output projections, the Inspector panel showing an Input Construction breakdown, and the Tensor Explorer's activation heatmap](docs/screenshot.png)
 
+> **Curious about a browser-only, no-GPU version?** Check out this
+> project's sister, [Tensorium](https://nice2008x.github.io/Tensorium/)
+> ([source](https://github.com/Nice2008X/Tensorium)) — though this
+> GPU-backed version is more fun to actually play with.
+
 ## Features
 
-- **Load any Hugging Face model** by repo id. The backend downloads it
-  on demand into `data/models/` (progress streamed live), then loads it
-  onto the GPU in bf16/fp16/fp32, or 4-bit/8-bit quantized via
+- **Load a Hugging Face model** by repo id — any architecture registered
+  with `transformers`' `AutoModelForCausalLM` and shipped as safetensors
+  works via the generic graph builder below; a repo using a custom/
+  non-`transformers` format or requiring `trust_remote_code` won't. The
+  backend downloads it on demand into `data/models/` (progress streamed
+  live), then loads it onto the GPU in bf16/fp16/fp32, or 4-bit/8-bit
+  quantized via
   `bitsandbytes`. A catalog lists everything already downloaded, and one
   model stays resident on the GPU at a time (survives a page reload —
   reopening the app just re-attaches to whatever's already loaded).

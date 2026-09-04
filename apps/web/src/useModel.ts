@@ -4,6 +4,7 @@ import { peekModelType } from "@aperture/hf-client";
 import { listModels, LoadCancelledError } from "@aperture/api-client";
 import { loadTokenizer, type Tokenizer } from "@aperture/tokenizer";
 import { ADAPTERS } from "./adapters.js";
+import { useLocalStorageState } from "./useLocalStorageState.js";
 
 export interface ModelState {
   status: "idle" | "loading" | "ready" | "error";
@@ -21,6 +22,13 @@ export interface ModelState {
 
 export function useModel() {
   const [state, setState] = useState<ModelState>({ status: "idle" });
+  // Persisted so a refresh can tell "the user explicitly came back to the
+  // loader screen" (App's goHome, via reset() below) apart from "no model
+  // has ever been loaded in this browser yet" — only the former should
+  // suppress the auto-resume effect further down; a first-ever visit (or
+  // any refresh once a model IS loaded) should still resume whatever's
+  // resident on the backend, same as before.
+  const [stayOnLoaderScreen, setStayOnLoaderScreen] = useLocalStorageState("app:stayOnLoaderScreen", false);
 
   const loadFromSource = useCallback(async (source: ModelSource) => {
     setState({ status: "loading" });
@@ -52,6 +60,7 @@ export function useModel() {
       const tokenizer = await loadTokenizer(source).catch(() => undefined);
 
       setState({ status: "ready", model, metadata, weightProvider, adapter, source, tokenizer });
+      setStayOnLoaderScreen(false);
     } catch (err) {
       // A Stop click (ModelLoader's cancelLoad) — not a real failure, so
       // this goes back to idle exactly like reset() rather than surfacing
@@ -66,14 +75,21 @@ export function useModel() {
       }
       setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
     }
-  }, []);
+  }, [setStayOnLoaderScreen]);
 
   const load = useCallback(
     (modelId: string, quantization?: "4bit" | "8bit") => loadFromSource({ kind: "backend", modelId: modelId.trim(), quantization }),
     [loadFromSource]
   );
 
-  const reset = useCallback(() => setState({ status: "idle" }), []);
+  // The one place "go back to the loader screen" happens (App's goHome) —
+  // marks it so a refresh right after doesn't get auto-resumed back into
+  // the model the user just deliberately stepped away from (see
+  // stayOnLoaderScreen and the effect below).
+  const reset = useCallback(() => {
+    setStayOnLoaderScreen(true);
+    setState({ status: "idle" });
+  }, [setStayOnLoaderScreen]);
 
   // Resume whatever model the backend already has resident on the GPU —
   // otherwise refreshing the page always lands back on the loader screen
@@ -83,7 +99,11 @@ export function useModel() {
   // already has an already-resident fast path (re-serves the cached
   // graph, no re-download or re-materializing weights onto the GPU), this
   // just calls it automatically instead of waiting for a catalog click.
+  // Skipped entirely if the user's last action was explicitly navigating
+  // back to the loader screen — refreshing there should keep showing the
+  // loader screen, not silently jump back into whatever's still resident.
   useEffect(() => {
+    if (stayOnLoaderScreen) return;
     let cancelled = false;
     listModels()
       .then((entries) => {
@@ -98,7 +118,7 @@ export function useModel() {
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, stayOnLoaderScreen]);
 
   return { state, load, reset };
 }

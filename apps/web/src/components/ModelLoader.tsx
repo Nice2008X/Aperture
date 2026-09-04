@@ -392,6 +392,17 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
         <>
           <div className="model-loader-title">{t("loader.title")}</div>
           <div className="model-loader-sub">{t("loader.subtitle")}</div>
+          <div className="model-loader-cross-promo">
+            {t("loader.crossPromo")}{" "}
+            <a href="https://nice2008x.github.io/Tensorium/" target="_blank" rel="noopener noreferrer">
+              {t("loader.crossPromoDemo")}
+            </a>
+            {" · "}
+            <a href="https://github.com/Nice2008X/Tensorium" target="_blank" rel="noopener noreferrer">
+              {t("loader.crossPromoGithub")}
+            </a>
+            <div className="model-loader-cross-promo-aside">{t("loader.crossPromoAside")}</div>
+          </div>
         </>
       )}
 

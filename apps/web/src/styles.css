@@ -223,6 +223,19 @@ input, select { font-family: inherit; }
 }
 .model-loader-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
 .model-loader-sub { color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
+.model-loader-cross-promo {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  background: var(--bg-chip);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+}
+.model-loader-cross-promo a { color: var(--accent-text); }
+.model-loader-cross-promo a:hover { text-decoration: underline; }
+.model-loader-cross-promo-aside { margin-top: 2px; font-style: italic; }
 .model-loader-section-title {
   font-size: 11px;
   font-weight: 600;
