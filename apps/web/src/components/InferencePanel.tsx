@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { InferenceState } from "../useInference.js";
 import type { GenerationState } from "../useGeneration.js";
 import { useTranslation } from "./LanguageContext.js";
@@ -6,12 +5,17 @@ import { useTranslation } from "./LanguageContext.js";
 interface Props {
   supported: boolean;
   state: InferenceState;
+  /** Lifted to App (rather than this panel's own useState) so Apply-a-prediction can rewrite it to match the token sequence actually just run, not just append to whatever text was there before. */
+  prompt: string;
+  onPromptChange: (prompt: string) => void;
   onRun: (prompt: string) => void;
   selectedTokenIndex: number | null;
   onSelectToken: (i: number) => void;
   compareEnabled: boolean;
   onToggleCompare: () => void;
   promptBState: InferenceState;
+  promptBText: string;
+  onPromptBTextChange: (prompt: string) => void;
   onRunB: (prompt: string) => void;
   /** Independent from selectedTokenIndex — clicking a Prompt B token should only affect Prompt B's own next-token PredictionPanel, not Prompt A's. */
   selectedTokenIndexB: number | null;
@@ -27,12 +31,16 @@ interface Props {
 export function InferencePanel({
   supported,
   state,
+  prompt,
+  onPromptChange,
   onRun,
   selectedTokenIndex,
   onSelectToken,
   compareEnabled,
   onToggleCompare,
   promptBState,
+  promptBText,
+  onPromptBTextChange,
   onRunB,
   selectedTokenIndexB,
   onSelectTokenB,
@@ -42,8 +50,6 @@ export function InferencePanel({
   onInspectStep,
 }: Props) {
   const { t } = useTranslation();
-  const [prompt, setPrompt] = useState("The cat sat on the");
-  const [promptB, setPromptB] = useState("The dog sat on the");
 
   if (!supported) {
     return (
@@ -65,7 +71,7 @@ export function InferencePanel({
         }}
       >
         <span className="inference-label">{t("inference.promptA")}</span>
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t("inference.placeholderA")} />
+        <input value={prompt} onChange={(e) => onPromptChange(e.target.value)} placeholder={t("inference.placeholderA")} />
         <button type="submit" disabled={state.status === "running"}>
           {state.status === "running" ? t("inference.running") : t("inference.run")}
         </button>
@@ -85,7 +91,7 @@ export function InferencePanel({
 
       {state.status === "error" && <div className="inference-error">{state.error}</div>}
 
-      {state.status === "ready" && state.displayTokens && (
+      {state.displayTokens && (
         <div className="token-chips">
           {state.displayTokens.map((t, i) => {
             const id = state.result?.tokenIds[i];
@@ -128,18 +134,18 @@ export function InferencePanel({
           className="inference-form prompt-b-form"
           onSubmit={(e) => {
             e.preventDefault();
-            onRunB(promptB);
+            onRunB(promptBText);
           }}
         >
           <span className="inference-label">{t("inference.promptB")}</span>
-          <input value={promptB} onChange={(e) => setPromptB(e.target.value)} placeholder={t("inference.placeholderB")} />
+          <input value={promptBText} onChange={(e) => onPromptBTextChange(e.target.value)} placeholder={t("inference.placeholderB")} />
           <button type="submit" disabled={promptBState.status === "running"}>
             {promptBState.status === "running" ? t("inference.running") : t("inference.runB")}
           </button>
         </form>
       )}
       {compareEnabled && promptBState.status === "error" && <div className="inference-error">{promptBState.error}</div>}
-      {compareEnabled && promptBState.status === "ready" && promptBState.displayTokens && (
+      {compareEnabled && promptBState.displayTokens && (
         <div className="token-chips token-chips-b">
           {promptBState.displayTokens.map((t, i) => {
             const id = promptBState.result?.tokenIds[i];

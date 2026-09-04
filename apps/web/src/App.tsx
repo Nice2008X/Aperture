@@ -69,6 +69,11 @@ export function App() {
   const [modelsPerPage, setModelsPerPage] = useLocalStorageState("settings:modelsPerPage", 5);
   const [showGpuStatus, setShowGpuStatus] = useLocalStorageState("settings:showGpuStatus", true);
   const [homeBusy, setHomeBusy] = useState(false);
+  // Lifted out of InferencePanel's own state so Apply-a-prediction (below)
+  // can rewrite the input text to match whatever token sequence was
+  // actually just run, not merely append to it.
+  const [promptAText, setPromptAText] = useState("The cat sat on the");
+  const [promptBText, setPromptBText] = useState("The dog sat on the");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<GraphView>({ kind: "architecture" });
   const [selectedTokenIndex, setSelectedTokenIndex] = useState<number | null>(null);
@@ -216,6 +221,28 @@ export function App() {
     inference.runTokenIds(prefix);
   };
 
+  // "Apply" a Prediction-panel row: same idea as inspectGenerationStep
+  // above (truncate-and-append, then re-run), just sourced from a
+  // *predicted* token (topKFromLogits) rather than one already generated —
+  // this is how a prediction becomes part of the actual sequence. Each
+  // prompt keeps its own tokenIds/selection, so applying a Prompt A
+  // prediction never touches Prompt B's sequence and vice versa.
+  const applyPredictionA = (tokenIndex: number, tokenId: number) => {
+    const prefix = [...inference.state.result!.tokenIds.slice(0, tokenIndex + 1), tokenId];
+    setSelectedTokenIndex(null);
+    setPredictionCollapsed(false);
+    setPromptAText(state.tokenizer!.decode(prefix));
+    inference.runTokenIds(prefix);
+  };
+
+  const applyPredictionB = (tokenIndex: number, tokenId: number) => {
+    const prefix = [...promptB.state.result!.tokenIds.slice(0, tokenIndex + 1), tokenId];
+    setSelectedTokenIndexB(null);
+    setPredictionCollapsed(false);
+    setPromptBText(state.tokenizer!.decode(prefix));
+    promptB.runTokenIds(prefix);
+  };
+
   // Switching tabs while the bottom panel is collapsed should actually show
   // the tab, not just change which one is "active" behind a collapsed strip
   // — every place that jumps to a specific bottom tab (the tab bar itself,
@@ -246,6 +273,16 @@ export function App() {
 
   const hasResult = inference.state.status === "ready" && !!inference.state.result;
   const hasResultB = compareEnabled && promptB.state.status === "ready" && !!promptB.state.result;
+  // Deliberately looser than hasResult/hasResultB above (no status ===
+  // "ready" check) — those two still gate the bottom-tab analyses
+  // (LogitLens/Attribution/Experiment), which should wait for a genuinely
+  // fresh result. The token chips and prediction-panels-row, though,
+  // should just keep showing the previous result while a re-run (e.g. from
+  // Apply) is in flight and swap to the new one once it lands, rather than
+  // blanking out and popping back in — useInference now keeps `result`
+  // populated through "running" specifically to make that possible.
+  const showPredictionA = !!inference.state.result;
+  const showPredictionB = compareEnabled && !!promptB.state.result;
   // Logit Lens only re-projects tensors an already-run capture already has
   // (see packages/interpretability's computeLogitLens) — it needs a real
   // ActivationCapture, not interventions, so it's ready as soon as any
@@ -466,12 +503,16 @@ export function App() {
             <InferencePanel
               supported={!!state.tokenizer}
               state={inference.state}
+              prompt={promptAText}
+              onPromptChange={setPromptAText}
               onRun={runPromptA}
               selectedTokenIndex={selectedTokenIndex}
               onSelectToken={setSelectedTokenIndex}
               compareEnabled={compareEnabled}
               onToggleCompare={() => setCompareEnabled((v) => !v)}
               promptBState={promptB.state}
+              promptBText={promptBText}
+              onPromptBTextChange={setPromptBText}
               onRunB={runPromptB}
               selectedTokenIndexB={selectedTokenIndexB}
               onSelectTokenB={setSelectedTokenIndexB}
@@ -480,23 +521,25 @@ export function App() {
               onStopGeneration={generation.stop}
               onInspectStep={inspectGenerationStep}
             />
-            {hasResult && state.tokenizer && (
+            {showPredictionA && state.tokenizer && (
               <div className="prediction-panels-row">
                 <PredictionPanel
                   result={inference.state.result!}
                   tokenizer={state.tokenizer}
                   selectedTokenIndex={selectedTokenIndex}
                   onViewWhy={() => viewWhy("A")}
+                  onApplyPrediction={applyPredictionA}
                   collapsed={predictionCollapsed}
                   onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
-                  promptLabel={hasResultB ? t("inference.promptA") : undefined}
+                  promptLabel={showPredictionB ? t("inference.promptA") : undefined}
                 />
-                {hasResultB && (
+                {showPredictionB && (
                   <PredictionPanel
                     result={promptB.state.result!}
                     tokenizer={state.tokenizer}
                     selectedTokenIndex={selectedTokenIndexB}
                     onViewWhy={() => viewWhy("B")}
+                    onApplyPrediction={applyPredictionB}
                     collapsed={predictionCollapsed}
                     onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
                     promptLabel={t("inference.promptB")}

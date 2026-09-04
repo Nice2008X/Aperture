@@ -9,6 +9,8 @@ interface Props {
   tokenizer: Tokenizer;
   selectedTokenIndex: number | null;
   onViewWhy: () => void;
+  /** "Apply" a predicted token: discard everything after the currently-inspected position, append this token, and re-run — called with (the inspected position, that row's predicted token id). */
+  onApplyPrediction: (tokenIndex: number, tokenId: number) => void;
   /** Lifted to App so the "maximize graph" control can collapse/expand this panel together with the tree/inspector/bottom panels, not just this panel's own toggle. */
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -22,7 +24,7 @@ interface Props {
  * ExperimentPanel's before/after comparison) so this needs no new
  * computation, just a place to show it without digging into a bottom tab.
  */
-export function PredictionPanel({ result, tokenizer, selectedTokenIndex, onViewWhy, collapsed, onToggleCollapsed, promptLabel }: Props) {
+export function PredictionPanel({ result, tokenizer, selectedTokenIndex, onViewWhy, onApplyPrediction, collapsed, onToggleCollapsed, promptLabel }: Props) {
   const { t } = useTranslation();
   // A stale selectedTokenIndex from a longer previous prompt (App only
   // resets it on model change, not on every re-run) would otherwise index
@@ -56,6 +58,15 @@ export function PredictionPanel({ result, tokenizer, selectedTokenIndex, onViewW
             return (
               <div key={r.tokenId} className="prediction-row">
                 <span className="prediction-token">{display.trim() || `#${r.tokenId}`}</span>
+                <button
+                  type="button"
+                  className="prediction-apply-btn"
+                  onClick={() => onApplyPrediction(tokenIndex, r.tokenId)}
+                  title={t("prediction.apply")}
+                  aria-label={t("prediction.apply")}
+                >
+                  ▶
+                </button>
                 <div className="prediction-bar-track">
                   <div className="prediction-bar-fill" style={{ width: `${maxProb > 0 ? (r.prob / maxProb) * 100 : 0}%` }} />
                 </div>

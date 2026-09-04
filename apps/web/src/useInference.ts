@@ -21,7 +21,11 @@ export function useInference(model: Model | undefined, weightProvider: WeightPro
         setState({ status: "error", error: `${adapter?.displayName ?? "This adapter"} does not support running inference yet.` });
         return;
       }
-      setState({ status: "running" });
+      // Keeps the previous result/displayTokens in state through "running"
+      // (a merge, not a full replace) — Apply/re-run should update the
+      // token chips and prediction panel in place once the new result
+      // lands, not blank them out and pop them back in.
+      setState((prev) => ({ ...prev, status: "running" }));
       try {
         const { ids, displayTokens } = tokenizer.encode(prompt);
         if (ids.length === 0) throw new Error("Prompt tokenized to zero tokens — try a non-empty prompt.");
@@ -48,7 +52,11 @@ export function useInference(model: Model | undefined, weightProvider: WeightPro
         setState({ status: "error", error: `${adapter?.displayName ?? "This adapter"} does not support running inference yet.` });
         return;
       }
-      setState({ status: "running" });
+      // Keeps the previous result/displayTokens in state through "running"
+      // (a merge, not a full replace) — Apply/re-run should update the
+      // token chips and prediction panel in place once the new result
+      // lands, not blank them out and pop them back in.
+      setState((prev) => ({ ...prev, status: "running" }));
       try {
         if (tokenIds.length === 0) throw new Error("No tokens to run inference on.");
         const start = performance.now();
