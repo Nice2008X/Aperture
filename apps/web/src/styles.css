@@ -595,7 +595,7 @@ input, select { font-family: inherit; }
 
 /* Each trigger button and its popover share one of these, so the popover's
    `right: 0` anchors under its own button rather than the whole controls bar. */
-.control-group { position: relative; display: flex; align-items: center; }
+.control-group { position: relative; display: flex; align-items: center; gap: 8px; }
 
 .go-home {
   background: none;
@@ -778,6 +778,35 @@ input, select { font-family: inherit; }
 .model-info-group:last-child { flex: 1 1 auto; min-width: 60px; overflow: hidden; }
 .model-info-group:last-child .model-info-group-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* --- Prompt section: collapsible wrapper around InferencePanel + the
+   prediction-panels-row, added on top of them without touching their own
+   layout/styling — collapsing it hides both at once. */
+.prompt-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-hairline);
+}
+.prompt-section-collapse-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.prompt-section-collapse-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-default); }
+.prompt-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+
 /* --- Inference panel --- */
 .inference-panel {
   padding: 10px 16px;
@@ -838,8 +867,6 @@ input, select { font-family: inherit; }
 .token-chip-id { font-size: 9px; color: var(--text-tertiary); line-height: 1; }
 .token-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
 .token-chip.selected { background: var(--bg-active); border-color: var(--accent); color: var(--text-primary); }
-.token-chip-readonly { cursor: default; opacity: 0.75; }
-.token-chip-readonly:hover { background: var(--bg-chip); color: var(--text-secondary); }
 
 /* --- Prediction panel --- */
 .prediction-panels-row { display: flex; align-items: stretch; flex-wrap: wrap; }
@@ -1394,7 +1421,10 @@ input, select { font-family: inherit; }
 .window-dash { color: var(--text-faint); }
 
 .tensor-body { display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap; }
-.tensor-visual { display: flex; flex-direction: column; gap: 10px; }
+/* Grows to fill whatever width tensor-stats' fixed min-width leaves behind
+   in the row, rather than shrinking to its content's size — the Matrix
+   table (.raw-grid-scroll) in particular stretches to fill it. */
+.tensor-visual { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; }
 
 .view-tabs { display: flex; gap: 4px; }
 .view-tabs button {
@@ -1437,7 +1467,7 @@ input, select { font-family: inherit; }
 .heatmap-wrap { display: flex; flex-direction: column; gap: 6px; }
 .heatmap-canvas { border: 1px solid var(--border-default); border-radius: var(--radius-sm); image-rendering: pixelated; max-width: 480px; max-height: 300px; }
 .heatmap-downsample-note { font-size: 11px; color: var(--text-tertiary); max-width: 480px; }
-.raw-grid-scroll { max-width: 520px; max-height: 320px; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.raw-grid-scroll { width: 100%; max-height: 320px; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
 .raw-grid { border-collapse: collapse; font-size: 10px; font-family: ui-monospace, monospace; }
 .raw-grid td { border: 1px solid var(--border-hairline); padding: 2px 5px; text-align: right; color: var(--text-secondary); }
 
@@ -1460,7 +1490,11 @@ input, select { font-family: inherit; }
 .stat-label { color: var(--text-secondary); }
 .stat-value { font-family: ui-monospace, monospace; }
 .stat-divider { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); margin: 10px 0 4px; }
-.histogram { display: flex; align-items: flex-end; gap: 1px; height: 120px; margin-top: 4px; background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 4px; min-width: 300px; }
+/* Fixed width, not just a minimum — .tensor-visual's flex:1 (added for the
+   Matrix table) otherwise stretches this to the row's full remaining
+   width via flex-column's default align-items:stretch, since each bar is
+   itself just flex:1 with no natural content width to resist it. */
+.histogram { display: flex; align-items: flex-end; gap: 1px; height: 120px; margin-top: 4px; background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 4px; width: 300px; }
 .histogram-bar { flex: 1; background: var(--accent); min-height: 1px; border-radius: 1px 1px 0 0; }
 
 .empty-hint { color: var(--text-tertiary); font-size: 12px; padding: 16px; }

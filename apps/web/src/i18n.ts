@@ -75,6 +75,8 @@ const en = {
   "loader.downloadCompleteHint": "{model} is now available.",
 
   "inference.promptA": "Prompt A",
+
+  "inference.sectionTitle": "Inference",
   "inference.promptB": "Prompt B",
   "inference.placeholderA": "Type a prompt to run through the model…",
   "inference.placeholderB": "A second prompt to compare against…",
@@ -213,6 +215,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} 现已可用。",
 
     "inference.promptA": "提示词 A",
+
+    "inference.sectionTitle": "推理",
     "inference.promptB": "提示词 B",
     "inference.placeholderA": "输入要送入模型的提示词…",
     "inference.placeholderB": "用于对比的第二个提示词…",
@@ -336,6 +340,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} ya está disponible.",
 
     "inference.promptA": "Prompt A",
+
+    "inference.sectionTitle": "Inferencia",
     "inference.promptB": "Prompt B",
     "inference.placeholderA": "Escribe un prompt para pasar por el modelo…",
     "inference.placeholderB": "Un segundo prompt para comparar…",
@@ -459,6 +465,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} est maintenant disponible.",
 
     "inference.promptA": "Prompt A",
+
+    "inference.sectionTitle": "Inférence",
     "inference.promptB": "Prompt B",
     "inference.placeholderA": "Tapez un prompt à faire passer dans le modèle…",
     "inference.placeholderB": "Un second prompt à comparer…",
@@ -582,6 +590,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} ist jetzt verfügbar.",
 
     "inference.promptA": "Prompt A",
+
+    "inference.sectionTitle": "Inferenz",
     "inference.promptB": "Prompt B",
     "inference.placeholderA": "Gib einen Prompt ein, der durch das Modell laufen soll…",
     "inference.placeholderB": "Ein zweiter Prompt zum Vergleich…",
@@ -705,6 +715,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} が利用可能になりました。",
 
     "inference.promptA": "プロンプト A",
+
+    "inference.sectionTitle": "推論",
     "inference.promptB": "プロンプト B",
     "inference.placeholderA": "モデルに通すプロンプトを入力…",
     "inference.placeholderB": "比較用の2つ目のプロンプト…",
@@ -828,6 +840,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model}을(를) 사용할 수 있습니다.",
 
     "inference.promptA": "프롬프트 A",
+
+    "inference.sectionTitle": "추론",
     "inference.promptB": "프롬프트 B",
     "inference.placeholderA": "모델에 입력할 프롬프트를 입력하세요…",
     "inference.placeholderB": "비교할 두 번째 프롬프트…",
@@ -951,6 +965,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} já está disponível.",
 
     "inference.promptA": "Prompt A",
+
+    "inference.sectionTitle": "Inferência",
     "inference.promptB": "Prompt B",
     "inference.placeholderA": "Digite um prompt para passar pelo modelo…",
     "inference.placeholderB": "Um segundo prompt para comparar…",
@@ -1074,6 +1090,8 @@ export const translations: Record<Language, Record<TranslationKey, string>> = {
     "loader.downloadCompleteHint": "{model} теперь доступна.",
 
     "inference.promptA": "Промпт A",
+
+    "inference.sectionTitle": "Инференс",
     "inference.promptB": "Промпт B",
     "inference.placeholderA": "Введите промпт для прогона через модель…",
     "inference.placeholderB": "Второй промпт для сравнения…",

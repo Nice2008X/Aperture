@@ -13,6 +13,9 @@ interface Props {
   onToggleCompare: () => void;
   promptBState: InferenceState;
   onRunB: (prompt: string) => void;
+  /** Independent from selectedTokenIndex — clicking a Prompt B token should only affect Prompt B's own next-token PredictionPanel, not Prompt A's. */
+  selectedTokenIndexB: number | null;
+  onSelectTokenB: (i: number) => void;
   /** Real multi-token generation (PLAN.md §8.5) — a separate streamed mode from `state`'s single forward pass, started from the same Prompt A text. */
   generationState: GenerationState;
   onGenerate: (prompt: string) => void;
@@ -31,6 +34,8 @@ export function InferencePanel({
   onToggleCompare,
   promptBState,
   onRunB,
+  selectedTokenIndexB,
+  onSelectTokenB,
   generationState,
   onGenerate,
   onStopGeneration,
@@ -139,10 +144,15 @@ export function InferencePanel({
           {promptBState.displayTokens.map((t, i) => {
             const id = promptBState.result?.tokenIds[i];
             return (
-              <span key={i} className="token-chip token-chip-readonly" title={id !== undefined ? `position ${i} · token id ${id}` : undefined}>
+              <button
+                key={i}
+                className={"token-chip" + (i === selectedTokenIndexB ? " selected" : "")}
+                onClick={() => onSelectTokenB(i)}
+                title={`position ${i}${id !== undefined ? ` · token id ${id}` : ""}`}
+              >
                 <span className="token-chip-text">{t.trim() === "" ? "·".repeat(Math.max(1, t.length)) : t}</span>
                 {id !== undefined && <span className="token-chip-id">{id}</span>}
-              </span>
+              </button>
             );
           })}
         </div>

@@ -72,6 +72,12 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<GraphView>({ kind: "architecture" });
   const [selectedTokenIndex, setSelectedTokenIndex] = useState<number | null>(null);
+  // Separate from selectedTokenIndex — that one is shared across the
+  // position-matching panels (TensorExplorer/LogitLens/Attribution, which
+  // intentionally compare the *same* token position between A and B), but
+  // each prompt's own next-token PredictionPanel should react only to
+  // clicks on that prompt's own tokens, not the other one's.
+  const [selectedTokenIndexB, setSelectedTokenIndexB] = useState<number | null>(null);
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("tensor");
   const [analysisBusy, setAnalysisBusy] = useState(false);
@@ -88,6 +94,11 @@ export function App() {
   const [bottomHeight, setBottomHeight] = useLocalStorageState("panel:bottom-height", BOTTOM_PANEL_DEFAULT_HEIGHT);
   const [resizingBottom, setResizingBottom] = useState(false);
   const [predictionCollapsed, setPredictionCollapsed] = useLocalStorageState("panel:prediction-collapsed", false);
+  // Wraps InferencePanel (Prompt A/B forms, tokens, Generate) and the
+  // prediction-panels-row together as one collapsible group — separate
+  // from predictionCollapsed above, which only hides the prediction rows
+  // within an already-visible group.
+  const [promptSectionCollapsed, setPromptSectionCollapsed] = useLocalStorageState("panel:prompt-section-collapsed", false);
   // Mirrors ArchitectureGraph's own on-canvas zoom badge — kept here too so
   // the status footer can show it without either component owning the
   // other's state.
@@ -181,6 +192,12 @@ export function App() {
     setSelectedTokenIndex(null);
     setPredictionCollapsed(false);
     inference.run(prompt);
+  };
+
+  const runPromptB = (prompt: string) => {
+    setSelectedTokenIndexB(null);
+    setPredictionCollapsed(false);
+    promptB.run(prompt);
   };
 
   const runGeneration = (prompt: string) => {
@@ -432,45 +449,64 @@ export function App() {
           />
         </div>
       </div>
-      <InferencePanel
-        supported={!!state.tokenizer}
-        state={inference.state}
-        onRun={runPromptA}
-        selectedTokenIndex={selectedTokenIndex}
-        onSelectToken={setSelectedTokenIndex}
-        compareEnabled={compareEnabled}
-        onToggleCompare={() => setCompareEnabled((v) => !v)}
-        promptBState={promptB.state}
-        onRunB={promptB.run}
-        generationState={generation.state}
-        onGenerate={runGeneration}
-        onStopGeneration={generation.stop}
-        onInspectStep={inspectGenerationStep}
-      />
-      {hasResult && state.tokenizer && (
-        <div className="prediction-panels-row">
-          <PredictionPanel
-            result={inference.state.result!}
-            tokenizer={state.tokenizer}
-            selectedTokenIndex={selectedTokenIndex}
-            onViewWhy={() => viewWhy("A")}
-            collapsed={predictionCollapsed}
-            onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
-            promptLabel={hasResultB ? t("inference.promptA") : undefined}
-          />
-          {hasResultB && (
-            <PredictionPanel
-              result={promptB.state.result!}
-              tokenizer={state.tokenizer}
-              selectedTokenIndex={selectedTokenIndex}
-              onViewWhy={() => viewWhy("B")}
-              collapsed={predictionCollapsed}
-              onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
-              promptLabel={t("inference.promptB")}
-            />
-          )}
+      <div className="prompt-section">
+        <div className="prompt-section-header">
+          <button
+            type="button"
+            className="prompt-section-collapse-btn"
+            onClick={() => setPromptSectionCollapsed((v) => !v)}
+            title={promptSectionCollapsed ? t("app.expandPanel") : t("app.collapsePanel")}
+          >
+            {promptSectionCollapsed ? "▸" : "▾"}
+          </button>
+          <span className="prompt-section-title">{t("inference.sectionTitle")}</span>
         </div>
-      )}
+        {!promptSectionCollapsed && (
+          <>
+            <InferencePanel
+              supported={!!state.tokenizer}
+              state={inference.state}
+              onRun={runPromptA}
+              selectedTokenIndex={selectedTokenIndex}
+              onSelectToken={setSelectedTokenIndex}
+              compareEnabled={compareEnabled}
+              onToggleCompare={() => setCompareEnabled((v) => !v)}
+              promptBState={promptB.state}
+              onRunB={runPromptB}
+              selectedTokenIndexB={selectedTokenIndexB}
+              onSelectTokenB={setSelectedTokenIndexB}
+              generationState={generation.state}
+              onGenerate={runGeneration}
+              onStopGeneration={generation.stop}
+              onInspectStep={inspectGenerationStep}
+            />
+            {hasResult && state.tokenizer && (
+              <div className="prediction-panels-row">
+                <PredictionPanel
+                  result={inference.state.result!}
+                  tokenizer={state.tokenizer}
+                  selectedTokenIndex={selectedTokenIndex}
+                  onViewWhy={() => viewWhy("A")}
+                  collapsed={predictionCollapsed}
+                  onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
+                  promptLabel={hasResultB ? t("inference.promptA") : undefined}
+                />
+                {hasResultB && (
+                  <PredictionPanel
+                    result={promptB.state.result!}
+                    tokenizer={state.tokenizer}
+                    selectedTokenIndex={selectedTokenIndexB}
+                    onViewWhy={() => viewWhy("B")}
+                    collapsed={predictionCollapsed}
+                    onToggleCollapsed={() => setPredictionCollapsed((v) => !v)}
+                    promptLabel={t("inference.promptB")}
+                  />
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
       <div className="app-body">
         <aside
           className={"pane pane-tree" + (treeCollapsed ? " collapsed" : "") + (resizingTree ? " resizing" : "")}

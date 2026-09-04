@@ -412,18 +412,25 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
 
         {!loading && displayTensor && displayStats && (
           <div className="tensor-body">
+            <div className="tensor-stats">
+              <StatRow label="Showing" value={`${displayTensor.shape.join(" × ")} (${displayTensor.data.length.toLocaleString()} values)`} />
+              <StatRow label="Min" value={displayStats.min.toFixed(4)} />
+              <StatRow label="Max" value={displayStats.max.toFixed(4)} />
+              <StatRow label="Mean" value={displayStats.mean.toFixed(4)} />
+              <StatRow label="Std" value={displayStats.std.toFixed(4)} />
+              <StatRow label="Sparsity" value={`${(displayStats.sparsity * 100).toFixed(1)}% (${displayStats.zeros.toLocaleString()} zeros)`} />
+              <div className="stat-divider">Percentiles</div>
+              <StatRow label="p1" value={displayStats.percentiles.p1.toFixed(4)} />
+              <StatRow label="p25" value={displayStats.percentiles.p25.toFixed(4)} />
+              <StatRow label="p50 (median)" value={displayStats.percentiles.p50.toFixed(4)} />
+              <StatRow label="p75" value={displayStats.percentiles.p75.toFixed(4)} />
+              <StatRow label="p99" value={displayStats.percentiles.p99.toFixed(4)} />
+            </div>
+
             <div className="tensor-visual">
               <div className="view-tabs">
                 <button className={view === "heatmap" ? "active" : ""} onClick={() => setView("heatmap")}>
                   Heatmap
-                </button>
-                <button
-                  className={view === "matrix" ? "active" : ""}
-                  disabled={!canShowMatrix}
-                  onClick={() => setView("matrix")}
-                  title={!canShowMatrix ? "Too many values to render as a table — narrow the window first" : undefined}
-                >
-                  Matrix
                 </button>
                 <button className={view === "histogram" ? "active" : ""} onClick={() => setView("histogram")}>
                   Histogram
@@ -433,6 +440,14 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
                     Per Token
                   </button>
                 )}
+                <button
+                  className={view === "matrix" ? "active" : ""}
+                  disabled={!canShowMatrix}
+                  onClick={() => setView("matrix")}
+                  title={!canShowMatrix ? "Too many values to render as a table — narrow the window first" : undefined}
+                >
+                  Matrix
+                </button>
               </div>
 
               {view === "heatmap" && displayTensor.shape.length === 2 && <Heatmap data={displayTensor.data} rows={displayTensor.shape[0]} cols={displayTensor.shape[1]} />}
@@ -449,21 +464,6 @@ export function TensorExplorer({ model, weightProvider, selectedNode, inference,
               {view === "matrix" && canShowMatrix && <RawGrid tensor={displayTensor} cols={displayTensor.shape.length === 1 && canShowTokens ? 1 : undefined} />}
               {view === "histogram" && <Histogram stats={displayStats} />}
               {view === "tokens" && canShowTokens && <PerTokenVectors tensor={displayTensor} tokens={activeInference!.displayTokens!} />}
-            </div>
-
-            <div className="tensor-stats">
-              <StatRow label="Showing" value={`${displayTensor.shape.join(" × ")} (${displayTensor.data.length.toLocaleString()} values)`} />
-              <StatRow label="Min" value={displayStats.min.toFixed(4)} />
-              <StatRow label="Max" value={displayStats.max.toFixed(4)} />
-              <StatRow label="Mean" value={displayStats.mean.toFixed(4)} />
-              <StatRow label="Std" value={displayStats.std.toFixed(4)} />
-              <StatRow label="Sparsity" value={`${(displayStats.sparsity * 100).toFixed(1)}% (${displayStats.zeros.toLocaleString()} zeros)`} />
-              <div className="stat-divider">Percentiles</div>
-              <StatRow label="p1" value={displayStats.percentiles.p1.toFixed(4)} />
-              <StatRow label="p25" value={displayStats.percentiles.p25.toFixed(4)} />
-              <StatRow label="p50 (median)" value={displayStats.percentiles.p50.toFixed(4)} />
-              <StatRow label="p75" value={displayStats.percentiles.p75.toFixed(4)} />
-              <StatRow label="p99" value={displayStats.percentiles.p99.toFixed(4)} />
             </div>
           </div>
         )}
