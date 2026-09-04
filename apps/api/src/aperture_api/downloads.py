@@ -42,8 +42,9 @@ os.environ.setdefault("TQDM_POSITION", "-1")
 # var once into a module-level constant, not per-call.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-from huggingface_hub import HfApi, snapshot_download  # noqa: E402
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download  # noqa: E402
 from huggingface_hub.utils import tqdm as hf_tqdm  # noqa: E402
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES  # noqa: E402
 
 # Only the files a model adapter actually needs — skip .bin duplicates,
 # .gguf/.onnx exports, and other repo cruft some HF repos ship alongside
@@ -124,6 +125,37 @@ def _non_weight_bytes(repo: str, revision: str) -> int | None:
         )
     except Exception:  # noqa: BLE001 — best-effort UI enhancement, never worth failing the download over
         return None
+
+
+def check_model_support(repo: str, revision: str = "main") -> dict:
+    """Best-effort pre-download check: is repo's config.json `model_type`
+    one that transformers' AutoModelForCausalLM actually knows how to
+    instantiate? A repo can have a perfectly ordinary, up-to-date
+    config.json and still never load here — its architecture might just
+    not be a `transformers` model at all (see PLAN.md §11's `needle2`
+    case: a proprietary mobile-runtime format whose `model_type: "needle"`
+    isn't registered anywhere in `transformers`, so
+    `AutoModelForCausalLM.from_pretrained` fails immediately regardless of
+    how the download itself goes). Fetches only config.json (a few KB, not
+    the weights), so this is cheap to run before committing to a real
+    download.
+
+    Returns `{"modelType": ..., "supported": ...}` with `supported: None`
+    (never False) whenever this can't be determined confidently — a
+    network hiccup, a gated repo, a bad revision, or a config with no
+    `model_type` field — so a caller only ever warns on an actual,
+    known-unsupported architecture, never on a merely-inconclusive check.
+    """
+    try:
+        config_path = hf_hub_download(repo_id=repo, filename="config.json", revision=revision)
+        config = json.loads(Path(config_path).read_text())
+    except Exception:  # noqa: BLE001 — gated repo, bad revision, network error, etc. all just mean "can't tell"
+        return {"modelType": None, "supported": None}
+
+    model_type = config.get("model_type")
+    if not model_type:
+        return {"modelType": None, "supported": None}
+    return {"modelType": model_type, "supported": model_type in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES}
 
 
 def existing_manifest(models_dir: Path, repo: str) -> dict | None:

@@ -21,7 +21,7 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .downloads import download_with_progress, request_cancel
+from .downloads import check_model_support, download_with_progress, request_cancel
 from .generation import generate_tokens
 from .inference import run_attribution_sweep, run_forward
 from .model_registry import ModelRegistry, NoModelLoadedError
@@ -128,6 +128,19 @@ REPO_ID_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,94}[A-Za-z0-9])?/[A-Za-z0-9]([
 class DownloadRequest(BaseModel):
     repo: str = Field(pattern=REPO_ID_PATTERN)
     revision: str = "main"
+
+
+@app.post("/api/models/check-support")
+async def check_model_support_route(body: DownloadRequest):
+    """Best-effort pre-download check for whether transformers'
+    AutoModelForCausalLM actually knows body.repo's architecture (see
+    downloads.py's check_model_support) — lets the frontend warn before
+    spending bandwidth on a checkpoint this backend can't load (PLAN.md
+    §11's needle2 case). Never raises: an inconclusive check (gated repo,
+    bad revision, no model_type) comes back as supported: None rather
+    than an error, since this is advisory only and shouldn't block a
+    download on its own account."""
+    return check_model_support(body.repo, body.revision)
 
 
 @app.post("/api/models/download")

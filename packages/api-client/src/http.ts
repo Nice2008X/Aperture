@@ -375,6 +375,31 @@ export function isDownloadError(event: DownloadEvent): event is DownloadError {
   return "error" in event;
 }
 
+export interface ModelSupportCheck {
+  /** config.json's `model_type`, or null if it couldn't be read (gated repo, bad revision, network error, or a config with no `model_type` field). */
+  modelType: string | null;
+  /** Whether transformers' AutoModelForCausalLM is registered for modelType. null (never false) whenever this couldn't be determined confidently — see apps/api's downloads.py check_model_support doc comment. */
+  supported: boolean | null;
+}
+
+/**
+ * Best-effort pre-download check: does this backend's transformers install
+ * actually know how to load repo's architecture? Fetches only repo's
+ * config.json server-side, not the weights, so it's cheap to call before a
+ * real download. A `supported: false` result means the download would very
+ * likely succeed but the model would then fail to load — see PLAN.md §11's
+ * `needle2` case for a real example (a proprietary format masquerading as
+ * a normal HF repo).
+ */
+export async function checkModelSupport(repo: string, revision?: string): Promise<ModelSupportCheck> {
+  const res = await apiFetch("/api/models/check-support", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, revision: revision ?? "main" }),
+  });
+  return res.json();
+}
+
 /**
  * Streams download progress (apps/api's /api/models/download, SSE) for
  * pulling a new model from Hugging Face into data/models/ — a no-op fast

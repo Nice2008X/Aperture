@@ -3,6 +3,7 @@ export {
   getApiBase,
   listModels,
   getGpuStatus,
+  checkModelSupport,
   loadModel,
   cancelLoad,
   LoadCancelledError,
@@ -23,6 +24,7 @@ export {
 export type {
   CatalogEntry,
   GpuStatus,
+  ModelSupportCheck,
   LoadDtype,
   GenerationOptions,
   GenerationEvent,

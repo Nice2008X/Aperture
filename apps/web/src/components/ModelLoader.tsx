@@ -3,6 +3,7 @@ import type { LoadProgressEvent } from "@aperture/model-ir";
 import {
   listModels,
   getGpuStatus,
+  checkModelSupport,
   streamDownload,
   cancelDownload,
   isDownloadDone,
@@ -19,6 +20,7 @@ import { useTranslation } from "./LanguageContext.js";
 import { formatBytes } from "../format.js";
 import { LoadProgressBar, type UnifiedLoadProgress } from "./LoadProgressBar.js";
 import { DeleteModelDialog } from "./DeleteModelDialog.js";
+import { UnsupportedModelDialog } from "./UnsupportedModelDialog.js";
 
 type Quantization = "4bit" | "8bit" | undefined;
 
@@ -150,6 +152,10 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
   const [unloadAllBusy, setUnloadAllBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CatalogEntry | null>(null);
+  // Set when checkModelSupport (called from startDownload, below) comes
+  // back with supported: false — holds the download until the user
+  // explicitly confirms via UnsupportedModelDialog, or clears it.
+  const [unsupportedWarning, setUnsupportedWarning] = useState<{ repo: string; modelType: string | null } | null>(null);
   // Set right before calling cancelDownload() so the loop in runDownload
   // knows, once the stream actually ends with a cancelled event, whether
   // to land on "paused" (keep the repo id, offer Resume) or reset back to
@@ -256,7 +262,41 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
     const parsed = extractRepoId(repo);
     if (!SAFE_REPO_ID_RE.test(parsed)) return;
     setRepo(parsed);
-    await runDownload(parsed);
+    await beginDownload(parsed);
+  };
+
+  // Gate in front of runDownload: checks whether this backend's
+  // transformers install actually knows repoId's architecture before
+  // spending bandwidth on it. A confident "no" holds for confirmation
+  // (see unsupportedWarning); an inconclusive check (network error, gated
+  // repo, no model_type) — same treatment as checkModelSupport returning
+  // supported: null — never blocks the download, since this is advisory
+  // only.
+  const beginDownload = async (repoId: string) => {
+    let supported: boolean | null = null;
+    let modelType: string | null = null;
+    try {
+      const check = await checkModelSupport(repoId);
+      supported = check.supported;
+      modelType = check.modelType;
+    } catch {
+      supported = null;
+    }
+    if (supported === false) {
+      setUnsupportedWarning({ repo: repoId, modelType });
+      return;
+    }
+    await runDownload(repoId);
+  };
+
+  const confirmUnsupportedDownload = () => {
+    const repoId = unsupportedWarning?.repo;
+    setUnsupportedWarning(null);
+    if (repoId) void runDownload(repoId);
+  };
+
+  const cancelUnsupportedDownload = () => {
+    setUnsupportedWarning(null);
   };
 
   const requestDownloadStop = (action: "pause" | "cancel") => {
@@ -729,6 +769,13 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
         busy={deleteTarget !== null && busyId === deleteTarget.id}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={confirmDelete}
+      />
+
+      <UnsupportedModelDialog
+        open={unsupportedWarning !== null}
+        modelType={unsupportedWarning?.modelType ?? null}
+        onCancel={cancelUnsupportedDownload}
+        onConfirm={confirmUnsupportedDownload}
       />
     </div>
   );
