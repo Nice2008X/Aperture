@@ -223,40 +223,14 @@ input, select { font-family: inherit; }
 }
 .model-loader-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
 .model-loader-sub { color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
-.model-loader-limitation { color: var(--text-tertiary); font-size: 12px; line-height: 1.5; margin-bottom: 20px; }
-.model-loader-form { display: flex; gap: 8px; }
-.model-loader-form input {
-  flex: 1;
-  padding: 10px 12px;
-  background: var(--bg-base);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  transition: border-color var(--transition-fast);
-}
-.model-loader-form input:focus-visible { border-color: var(--accent); }
-.model-loader-form button {
-  padding: 10px 16px;
-  background: var(--accent);
-  border: none;
-  border-radius: var(--radius-md);
-  color: white;
+.model-loader-section-title {
+  font-size: 11px;
   font-weight: 600;
-  transition: background-color var(--transition-fast);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: 16px 0 8px;
 }
-.model-loader-form button:hover:not(:disabled) { background: var(--accent-hover); }
-.model-loader-form button:disabled { opacity: 0.6; cursor: default; }
-.model-loader-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.preset-chip {
-  padding: 6px 10px;
-  background: var(--bg-chip);
-  border: 1px solid var(--border-default);
-  border-radius: 999px;
-  color: var(--accent-text);
-  font-size: 12px;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
-}
-.preset-chip:hover { background: var(--bg-hover); border-color: var(--border-strong); }
 .model-loader-error {
   margin-top: 16px;
   padding: 10px 12px;
@@ -269,28 +243,122 @@ input, select { font-family: inherit; }
 }
 .model-loader-catalog-status { color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
 .model-loader-catalog-status code { font-size: 11px; }
-.model-loader-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.model-loader-catalog { display: flex; flex-direction: column; gap: 8px; }
 .model-loader-catalog-entry {
+  /* Collapsed by default (every card but the selected one) — a single row
+     of name/meta/fit-icon. .expanded (the selected card) switches this to
+     the full multi-line layout below. */
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 9px;
   background: var(--bg-chip);
   border: 1px solid var(--border-default);
+  /* A 3px left strip carries the selected/loaded state (todo12.txt §4)
+     instead of the thick full-card outline this used to have — transparent
+     by default so selecting/deselecting only recolors it rather than
+     shifting the card's contents (padding-left above is trimmed by the
+     same 3px so the resting state lines up with a plain 1px-bordered
+     card). */
+  border-left: 3px solid transparent;
   border-radius: var(--radius-md);
   text-align: left;
   transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }
-.model-loader-catalog-entry:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
-.model-loader-catalog-entry:disabled { opacity: 0.6; cursor: default; }
-.model-loader-catalog-name { font-weight: 600; color: var(--accent-text); }
+.model-loader-catalog-entry.expanded {
+  /* Now a <div>, not a <button> (it hosts the config panel's own
+     <select>/<button> controls, which can't nest inside another button —
+     see the .model-loader-card-toggle/.model-loader-card-config split
+     below), so its layout comes from this modifier alone rather than
+     also relying on button-only pseudo-classes. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px 10px 9px;
+}
+.model-loader-catalog-entry:not(.expanded):not(.disabled):hover { background: var(--bg-hover); border-color: var(--border-strong); border-left-color: var(--border-strong); }
+/* Collapsed row's outer element is a <div> (its Unload/Delete buttons
+   can't nest inside a <button>, same reason the expanded card below isn't
+   one either) — disabled-ness is tracked via this class instead of the
+   :disabled pseudo-class, which only the inner toggle button can carry. */
+.model-loader-catalog-entry.disabled { opacity: 0.6; }
+.model-loader-card-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.model-loader-card-toggle-row:disabled { cursor: default; }
+/* Selected takes the accent, loaded takes success — the two are mutually
+   exclusive in practice (selectEntry() never lets a loaded card become
+   "selected", it just re-triggers onLoad) but styled independently since
+   nothing enforces that at the type level. */
+.model-loader-catalog-entry.selected { background: var(--bg-hover); border-left-color: var(--accent); }
+.model-loader-catalog-entry.loaded { border-left-color: var(--success); }
+.model-loader-catalog-entry-header { display: flex; align-items: baseline; justify-content: space-between; width: 100%; gap: 8px; }
+.model-loader-catalog-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
+.model-loader-catalog-family { font-size: 12px; color: var(--text-secondary); }
 .model-loader-catalog-meta { font-size: 11px; color: var(--text-tertiary); }
+/* Collapsed row's single combined meta string (family · size · precision)
+   — flexes to fill the space between the name and the fit icon, and
+   ellipsizes rather than wrapping the row onto a second line. */
+.model-loader-catalog-meta-inline { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-tertiary); }
+.model-loader-catalog-badge { font-size: 10px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+.model-loader-catalog-badge.loaded { color: var(--success); }
+.model-loader-catalog-badge.selected { color: var(--accent-text); }
+/* Collapsed row's icon-only fit indicator (todo12.txt follow-up — a
+   colored glyph instead of restating "Fits"/"Tight"/"Won't fit" on every
+   line); the same word is still available as a `title` tooltip. */
+.model-loader-card-fit-icon { flex-shrink: 0; font-size: 13px; font-weight: 700; }
+.model-loader-card-fit-icon.fits { color: var(--success); }
+.model-loader-card-fit-icon.tight { color: var(--warning); }
+.model-loader-card-fit-icon.no { color: var(--danger); }
 /* Nested inside .load-model-panel, which already supplies its own card chrome (background/border/shadow) and header — strip this component's own so it doesn't render as a card-within-a-card. */
 .model-loader.embedded { width: auto; padding: 0; background: none; border: none; border-radius: 0; box-shadow: none; }
 
-.model-loader-quantization { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-tertiary); }
-.model-loader-quantization select {
+/* --- GPU status (todo11.txt §6) --- */
+.model-loader-gpu { margin-bottom: 16px; padding: 10px 12px; background: var(--bg-chip); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.model-loader-gpu-header { display: flex; align-items: baseline; gap: 8px; font-size: 12px; margin-bottom: 6px; }
+.model-loader-gpu-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+.model-loader-gpu-name { flex: 1; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-loader-gpu-mem { color: var(--text-tertiary); font-size: 11px; white-space: nowrap; }
+.model-loader-gpu-bar { margin: 0; }
+
+/* --- Model configuration (todo11.txt §2/§7) — lives inside the selected
+   card itself (see .model-loader-catalog-entry.expanded above), not a
+   separate panel. --- */
+/* Resets the header/family part of an expanded card back to plain text
+   appearance — it's a <button> only so the whole header stays clickable
+   to collapse the card again, matching the "click a card" affordance
+   every collapsed row has. */
+.model-loader-card-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.model-loader-card-toggle:disabled { cursor: default; }
+.model-loader-card-config { width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-hairline); }
+.model-loader-config-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+.model-loader-config-row:first-of-type { margin-top: 0; }
+.model-loader-config-label { color: var(--text-tertiary); }
+.model-loader-config-value { color: var(--text-primary); font-weight: 600; }
+.model-loader-config-row select {
   padding: 5px 8px;
   background: var(--bg-base);
   border: 1px solid var(--border-default);
@@ -298,8 +366,107 @@ input, select { font-family: inherit; }
   color: var(--text-primary);
   font-size: 12px;
 }
+.model-loader-fit-note { margin-top: 10px; }
+.model-loader-fit-headline { font-size: 12px; font-weight: 600; }
+.model-loader-fit-detail { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+.model-loader-fit-note.fits .model-loader-fit-headline { color: var(--success); }
+.model-loader-fit-note.tight .model-loader-fit-headline { color: var(--warning); }
+.model-loader-fit-note.no .model-loader-fit-headline { color: var(--danger); }
+.model-loader-load-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  color: white;
+  font-weight: 600;
+  transition: background-color var(--transition-fast);
+}
+.model-loader-load-btn:hover { background: var(--accent-hover); }
 
-.model-loader-download-form { display: flex; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-subtle); }
+/* --- Model library header + per-card unload/delete actions --- */
+.model-loader-catalog-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 8px; }
+.model-loader-catalog-header .model-loader-section-title { margin: 0; }
+.model-loader-unload-all-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-chip);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.model-loader-unload-all-btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text-primary); }
+.model-loader-unload-all-btn:disabled { opacity: 0.4; cursor: default; }
+.model-loader-card-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.model-loader-card-action:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text-primary); }
+.model-loader-card-action:disabled { opacity: 0.5; cursor: default; }
+.model-loader-card-action.delete { color: var(--danger); border-color: var(--danger-border); }
+.model-loader-card-action.delete:hover:not(:disabled) { background: var(--danger-bg); }
+/* Collapsed row's delete action is icon-only (space is tight next to the
+   fit icon/unload button) — the expanded card keeps the full text button. */
+.model-loader-card-action.icon { width: 24px; height: 24px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+.model-loader-card-delete-expanded { width: 100%; margin-top: 8px; }
+
+/* --- Model library pagination — round numbered page buttons --- */
+.model-loader-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; }
+.model-loader-page-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-chip);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.model-loader-page-dot:hover:not(.active) { background: var(--bg-hover); border-color: var(--border-strong); }
+.model-loader-page-dot.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* --- Get another model (todo11.txt §8) --- */
+.model-loader-download-section { margin-top: 4px; padding-top: 14px; border-top: 1px dashed var(--border-subtle); }
+.model-loader-download-section .model-loader-section-title { margin-top: 0; }
+/* Source tabs — "Hugging Face" is the only source today. */
+.model-loader-source-tabs { display: flex; align-items: baseline; gap: 20px; margin-bottom: 8px; border-bottom: 1px solid var(--border-subtle); }
+.model-loader-source-tab {
+  padding-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  position: relative;
+}
+.model-loader-source-tab.active { color: var(--text-primary); }
+.model-loader-source-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.model-loader-source-hint { margin: 0 0 10px; font-size: 11px; color: var(--text-tertiary); }
+.model-loader-download-complete { margin-top: 8px; font-size: 12px; color: var(--success); }
+.model-loader-download-form { display: flex; gap: 8px; }
 .model-loader-download-form input {
   flex: 1;
   padding: 7px 10px;
@@ -310,7 +477,11 @@ input, select { font-family: inherit; }
   transition: border-color var(--transition-fast);
 }
 .model-loader-download-form input:focus-visible { border-color: var(--accent); }
-.model-loader-download-form button {
+/* Scoped to this one button (not a bare "button inside the form" selector)
+   so it can't out-specificity the Pause/Resume/Cancel icon buttons that
+   share this form — see .model-loader-card-action below, reused here for
+   those. */
+.model-loader-download-submit {
   padding: 7px 14px;
   background: var(--accent);
   border: none;
@@ -321,10 +492,79 @@ input, select { font-family: inherit; }
   flex-shrink: 0;
   transition: background-color var(--transition-fast);
 }
-.model-loader-download-form button:hover:not(:disabled) { background: var(--accent-hover); }
-.model-loader-download-form button:disabled { opacity: 0.6; cursor: default; }
-.model-loader-download-progress { margin-top: 8px; }
-.model-loader-loading-progress { margin-bottom: 16px; padding: 12px; background: var(--bg-chip); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.model-loader-download-submit:hover:not(:disabled) { background: var(--accent-hover); }
+.model-loader-download-submit:disabled { opacity: 0.6; cursor: default; }
+.model-loader-download-paused-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 4px; }
+/* Pause/Resume and Cancel sit on the same row as the bar, flush at the
+   end — not a separate row above/below it (that read as disconnected from
+   what they actually act on). */
+.model-loader-download-progress-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.model-loader-download-progress { flex: 1; min-width: 0; }
+/* Anchored at the very bottom of the loader screen (below the catalog and
+   the Add-a-model form) rather than up near the GPU status bar — a model
+   load can take tens of seconds, and a footer keeps that feedback visible
+   in a fixed spot instead of shifting position depending on what else is
+   showing above it (catalog vs. "no models yet" vs. a download in progress). */
+/* Layout (flex row, bar + icon flush at the end) comes from
+   .model-loader-download-progress-row, applied alongside this — same
+   container shape as the Hugging Face download's progress row, just
+   positioned at the very bottom of the screen instead of inside the
+   Add-a-model section. */
+.model-loader-footer { margin-top: 16px; }
+
+/* --- Modal confirm dialogs (DeleteModelDialog) — same backdrop/card/detail-row shape everywhere a "name the thing, then confirm" dialog is needed --- */
+.save-model-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.save-model-dialog {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+}
+.save-model-dialog-header { display: flex; align-items: center; justify-content: space-between; font-weight: 600; margin-bottom: 8px; }
+.save-model-dialog-close { background: none; border: none; color: var(--text-secondary); font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: var(--radius-sm); }
+.save-model-dialog-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.save-model-dialog-desc { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; }
+.save-model-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.save-model-dialog-cancel,
+.delete-model-dialog-confirm {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.save-model-dialog-cancel { background: none; border: 1px solid var(--border-default); color: var(--text-secondary); }
+.save-model-dialog-cancel:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+.save-model-dialog-cancel:disabled, .delete-model-dialog-confirm:disabled { opacity: 0.6; cursor: default; }
+/* Danger-colored (not the accent SaveModelDialog's confirm uses) — this
+   action is destructive and irreversible, and should read that way as the
+   dialog's non-default choice rather than its inviting primary one. */
+.delete-model-dialog-confirm { background: var(--danger-strong); border: none; color: white; }
+.delete-model-dialog-confirm:hover:not(:disabled) { background: var(--danger); }
+.unknown-model-dialog-detected {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  background: var(--bg-chip);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+.unknown-model-dialog-detected-label { color: var(--text-tertiary); flex-shrink: 0; }
+.unknown-model-dialog-detected-value { font-family: ui-monospace, monospace; color: var(--text-primary); overflow-wrap: anywhere; }
 
 /* --- Shared load/download progress bar (LoadProgressBar) --- */
 .load-progress { display: flex; flex-direction: column; gap: 6px; }
@@ -338,48 +578,6 @@ input, select { font-family: inherit; }
   100% { margin-left: 0%; }
 }
 .load-progress-status { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
-
-.model-loader-source-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border-hairline); }
-.model-loader-source-tabs button {
-  padding: 6px 12px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 600;
-  transition: color var(--transition-fast), border-color var(--transition-fast);
-}
-.model-loader-source-tabs button:hover { color: var(--text-primary); }
-.model-loader-source-tabs button.active { color: var(--accent-text); border-bottom-color: var(--accent); }
-
-.model-loader-local-form { display: flex; flex-direction: column; gap: 10px; }
-.model-loader-local-hint { color: var(--text-tertiary); font-size: 11px; margin: 0; }
-.model-loader-file-row { display: flex; flex-direction: column; gap: 4px; }
-.model-loader-file-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
-.model-loader-file-desc { font-size: 11px; color: var(--text-tertiary); }
-.model-loader-file-row input[type="file"] {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 6px 0;
-}
-.model-loader-file-status { font-size: 11px; }
-.model-loader-file-status.checking { color: var(--text-tertiary); }
-.model-loader-file-status.ok { color: var(--success); }
-.model-loader-file-status.warning { color: var(--warning); }
-.model-loader-file-status.error { color: var(--danger); }
-.model-loader-local-form > button {
-  align-self: flex-start;
-  padding: 10px 16px;
-  background: var(--accent);
-  border: none;
-  border-radius: var(--radius-md);
-  color: white;
-  font-weight: 600;
-  transition: background-color var(--transition-fast);
-}
-.model-loader-local-form > button:hover:not(:disabled) { background: var(--accent-hover); }
-.model-loader-local-form > button:disabled { opacity: 0.6; cursor: default; }
 
 /* --- App shell --- */
 .app { height: 100%; position: relative; display: flex; flex-direction: column; }
@@ -525,6 +723,18 @@ input, select { font-family: inherit; }
 .settings-checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-primary); cursor: pointer; }
 .settings-checkbox-row input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 .settings-checkbox-hint { margin-top: 4px; font-size: 11px; color: var(--text-tertiary); line-height: 1.4; }
+.settings-number-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-primary); }
+.settings-number-input {
+  width: 56px;
+  padding: 4px 6px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: right;
+}
+.settings-number-input:focus-visible { border-color: var(--accent); }
 
 /* --- Theme switcher --- */
 .theme-switcher { display: flex; gap: 6px; padding: 3px; background: var(--bg-chip); border: 1px solid var(--border-default); border-radius: 999px; }

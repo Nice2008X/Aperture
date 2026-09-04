@@ -66,6 +66,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loadModelOpen, setLoadModelOpen] = useState(false);
   const [unloadOnHome, setUnloadOnHome] = useLocalStorageState("settings:unloadOnHome", false);
+  const [modelsPerPage, setModelsPerPage] = useLocalStorageState("settings:modelsPerPage", 5);
+  const [showGpuStatus, setShowGpuStatus] = useLocalStorageState("settings:showGpuStatus", true);
   const [homeBusy, setHomeBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<GraphView>({ kind: "architecture" });
@@ -125,9 +127,27 @@ export function App() {
       <div className="app-loader-screen">
         <div className="top-right-controls">
           <SettingsButton open={settingsOpen} onToggle={() => setSettingsOpen((v) => !v)} />
-          <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={setTheme} unloadOnHome={unloadOnHome} onUnloadOnHomeChange={setUnloadOnHome} />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            theme={theme}
+            onThemeChange={setTheme}
+            unloadOnHome={unloadOnHome}
+            onUnloadOnHomeChange={setUnloadOnHome}
+            modelsPerPage={modelsPerPage}
+            onModelsPerPageChange={setModelsPerPage}
+            showGpuStatus={showGpuStatus}
+            onShowGpuStatusChange={setShowGpuStatus}
+          />
         </div>
-        <ModelLoader status={state.status} error={state.error} onLoad={load} loadProgress={state.loadProgress} />
+        <ModelLoader
+          status={state.status}
+          error={state.error}
+          onLoad={load}
+          loadProgress={state.loadProgress}
+          modelsPerPage={modelsPerPage}
+          showGpuStatus={showGpuStatus}
+        />
       </div>
     );
   }
@@ -392,11 +412,24 @@ export function App() {
             error={state.error}
             excludeModelId={currentModelId}
             onLoad={load}
+            modelsPerPage={modelsPerPage}
+            showGpuStatus={showGpuStatus}
           />
         </div>
         <div className="control-group">
           <SettingsButton open={settingsOpen} onToggle={() => setSettingsOpen((v) => !v)} />
-          <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={setTheme} unloadOnHome={unloadOnHome} onUnloadOnHomeChange={setUnloadOnHome} />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            theme={theme}
+            onThemeChange={setTheme}
+            unloadOnHome={unloadOnHome}
+            onUnloadOnHomeChange={setUnloadOnHome}
+            modelsPerPage={modelsPerPage}
+            onModelsPerPageChange={setModelsPerPage}
+            showGpuStatus={showGpuStatus}
+            onShowGpuStatusChange={setShowGpuStatus}
+          />
         </div>
       </div>
       <InferencePanel

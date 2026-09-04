@@ -12,6 +12,7 @@ import asyncio
 import gc
 import json
 import queue
+import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,11 +118,36 @@ class NoModelLoadedError(Exception):
     pass
 
 
+class LoadCancelled(Exception):
+    """Raised (from inside load_with_progress's tqdm hook) when
+    request_cancel_load() is called for the model currently materializing
+    onto the GPU. Mirrors downloads.py's DownloadCancelled — same
+    reasoning, just for the "loading weights onto the GPU" step instead of
+    the "downloading the checkpoint" one. Unlike a download, there's no
+    partial-file resume story here: the next Load click just starts this
+    same step over from the top."""
+
+
 class ModelRegistry:
     def __init__(self, models_dir: Path):
         self.models_dir = models_dir
         self._loaded: LoadedModel | None = None
         self._lock = asyncio.Lock()
+        # Which model_id load_with_progress is currently materializing (not
+        # the same as self._loaded, which is only set once it's actually
+        # done) — lets request_cancel_load reject a stale/mismatched cancel
+        # the same way downloads.py's _active_downloads does.
+        self._loading_model_id: str | None = None
+        self._cancel_load_requested = False
+
+    def request_cancel_load(self, model_id: str) -> bool:
+        """Marks the in-flight load of model_id for cancellation. Returns
+        False (and does nothing) if that model isn't the one currently
+        loading, e.g. a stale click after it already finished."""
+        if self._loading_model_id != model_id:
+            return False
+        self._cancel_load_requested = True
+        return True
 
     def catalog(self) -> list[dict]:
         if not self.models_dir.exists():
@@ -167,6 +193,8 @@ class ModelRegistry:
             self._unload_locked()
 
             progress_queue: queue.Queue = queue.Queue()
+            self._loading_model_id = model_id
+            self._cancel_load_requested = False
 
             # transformers' from_pretrained has no tqdm_class-style
             # parameter, but exposes an equivalent (and, unlike
@@ -182,6 +210,15 @@ class ModelRegistry:
 
                 def update(n: int = 1) -> None:
                     real_update(n)
+                    # Checked here (not a separate poll loop) for the same
+                    # reason downloads.py's _ProgressTqdm does — this fires
+                    # on every real parameter materialized, so a Stop click
+                    # lands within about one tensor, not "wait for the
+                    # whole checkpoint". Unlike Xet's native download loop,
+                    # from_pretrained's weight-loading loop is plain Python,
+                    # so raising here reliably unwinds it.
+                    if self._cancel_load_requested:
+                        raise LoadCancelled(model_id)
                     progress_queue.put({"phase": "loading_weights", "desc": str(getattr(bar, "desc", "") or ""), "n": bar.n, "total": bar.total})
 
                 bar.update = update
@@ -219,7 +256,21 @@ class ModelRegistry:
                             break
                         await asyncio.sleep(0.1)
                 model = await task
+            except LoadCancelled:
+                self._loading_model_id = None
+                self._cancel_load_requested = False
+                # Whatever layers from_pretrained had already materialized
+                # onto the GPU before the interrupt are now unreferenced
+                # (the crashed run() thread's local `m` never escaped it) —
+                # same cleanup _unload_locked() does, to reclaim that
+                # memory promptly instead of waiting on GC's own schedule.
+                gc.collect()
+                torch.cuda.empty_cache()
+                yield {"cancelled": True}
+                return
             except Exception as e:  # noqa: BLE001 — a bad checkpoint, OOM, etc. all become one clear event
+                self._loading_model_id = None
+                self._cancel_load_requested = False
                 yield {"error": str(e)}
                 return
 
@@ -245,11 +296,25 @@ class ModelRegistry:
                 attention_cache={},
                 run_order=[],
             )
+            self._loading_model_id = None
+            self._cancel_load_requested = False
             yield {"done": True, "graph": built.model.model_dump(by_alias=True)}
 
     async def unload(self) -> None:
         async with self._lock:
             self._unload_locked()
+
+    async def delete(self, model_id: str) -> None:
+        """Removes a downloaded model from data/models/ — unloading it first
+        if it's the resident one, so no stale GPU reference survives the
+        delete. Raises FileNotFoundError if it was never downloaded."""
+        path = self.models_dir / model_id
+        if not path.exists():
+            raise FileNotFoundError(model_id)
+        async with self._lock:
+            if self._loaded is not None and self._loaded.model_id == model_id:
+                self._unload_locked()
+        shutil.rmtree(path)
 
     def _unload_locked(self) -> None:
         if self._loaded is None:

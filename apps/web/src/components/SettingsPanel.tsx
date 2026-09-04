@@ -10,7 +10,15 @@ interface Props {
   onThemeChange: (t: Theme) => void;
   unloadOnHome: boolean;
   onUnloadOnHomeChange: (v: boolean) => void;
+  modelsPerPage: number;
+  onModelsPerPageChange: (v: number) => void;
+  showGpuStatus: boolean;
+  onShowGpuStatusChange: (v: boolean) => void;
 }
+
+/** Keeps a stray localStorage value (hand-edited, or from a future/older build) from producing zero or negative pages. */
+const MODELS_PER_PAGE_MIN = 1;
+const MODELS_PER_PAGE_MAX = 50;
 
 export function SettingsButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
@@ -21,7 +29,18 @@ export function SettingsButton({ open, onToggle }: { open: boolean; onToggle: ()
   );
 }
 
-export function SettingsPanel({ open, onClose, theme, onThemeChange, unloadOnHome, onUnloadOnHomeChange }: Props) {
+export function SettingsPanel({
+  open,
+  onClose,
+  theme,
+  onThemeChange,
+  unloadOnHome,
+  onUnloadOnHomeChange,
+  modelsPerPage,
+  onModelsPerPageChange,
+  showGpuStatus,
+  onShowGpuStatusChange,
+}: Props) {
   const { t, language, setLanguage } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +91,26 @@ export function SettingsPanel({ open, onClose, theme, onThemeChange, unloadOnHom
           {t("settings.unloadOnHome")}
         </label>
         <div className="settings-checkbox-hint">{t("settings.unloadOnHomeHint")}</div>
+        <label className="settings-number-row">
+          {t("settings.modelsPerPage")}
+          <input
+            type="number"
+            className="settings-number-input"
+            min={MODELS_PER_PAGE_MIN}
+            max={MODELS_PER_PAGE_MAX}
+            value={modelsPerPage}
+            onChange={(e) => {
+              const n = Math.round(Number(e.target.value));
+              if (Number.isFinite(n)) onModelsPerPageChange(Math.min(MODELS_PER_PAGE_MAX, Math.max(MODELS_PER_PAGE_MIN, n)));
+            }}
+          />
+        </label>
+        <div className="settings-checkbox-hint">{t("settings.modelsPerPageHint")}</div>
+        <label className="settings-checkbox-row">
+          <input type="checkbox" checked={showGpuStatus} onChange={(e) => onShowGpuStatusChange(e.target.checked)} />
+          {t("settings.showGpuStatus")}
+        </label>
+        <div className="settings-checkbox-hint">{t("settings.showGpuStatusHint")}</div>
       </div>
     </div>
   );

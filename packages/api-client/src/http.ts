@@ -47,6 +47,16 @@ export async function listModels(): Promise<CatalogEntry[]> {
   return res.json();
 }
 
+export type GpuStatus =
+  | { available: false }
+  | { available: true; name: string; totalBytes: number; freeBytes: number; usedBytes: number };
+
+/** Live VRAM snapshot for the loader screen's GPU bar and per-model fit-check (todo11.txt §6/§7). */
+export async function getGpuStatus(): Promise<GpuStatus> {
+  const res = await apiFetch("/api/gpu");
+  return res.json();
+}
+
 export type LoadDtype = "bf16" | "fp16" | "fp32";
 export type LoadQuantization = "4bit" | "8bit" | null;
 
@@ -60,10 +70,21 @@ interface LoadDoneWire {
   done: true;
   graph: Model;
 }
+interface LoadCancelledWire {
+  cancelled: true;
+}
 interface LoadErrorWire {
   error: string;
 }
-type LoadEventWire = LoadProgressWire | LoadDoneWire | LoadErrorWire;
+type LoadEventWire = LoadProgressWire | LoadDoneWire | LoadCancelledWire | LoadErrorWire;
+
+/** Thrown by loadModel when the load was stopped via cancelLoad (a Stop click), never for a real failure — callers should treat this as "back to idle", not as an error to display. */
+export class LoadCancelledError extends Error {
+  constructor(modelId: string) {
+    super(`Load cancelled for ${modelId}.`);
+    this.name = "LoadCancelledError";
+  }
+}
 
 /**
  * Loads (or re-serves, if already resident) a model onto the GPU and
@@ -85,6 +106,7 @@ export async function loadModel(
     body: JSON.stringify({ dtype, quantization }),
   });
   for await (const event of parseEventStream<LoadEventWire>(res)) {
+    if ("cancelled" in event) throw new LoadCancelledError(modelId);
     if ("error" in event) throw new Error(event.error);
     if ("phase" in event) {
       onProgress?.({ phase: event.phase, detail: event.desc, current: event.n, total: event.total });
@@ -95,8 +117,18 @@ export async function loadModel(
   throw new Error("Load stream ended without a result.");
 }
 
+/** Stops an in-flight loadModel() call for modelId — see apps/api's ModelRegistry.request_cancel_load/LoadCancelled for how that actually interrupts from_pretrained. The open loadModel() promise rejects with a LoadCancelledError shortly after this resolves. */
+export async function cancelLoad(modelId: string): Promise<void> {
+  await apiFetch(`/api/models/${encodeURIComponent(modelId)}/load/cancel`, { method: "POST" });
+}
+
 export async function unloadModel(modelId: string): Promise<void> {
   await apiFetch(`/api/models/${encodeURIComponent(modelId)}/unload`, { method: "POST" });
+}
+
+/** Unloads (if resident) and permanently removes a downloaded model's files from data/models/ — the catalog's "delete" action. */
+export async function deleteModel(modelId: string): Promise<void> {
+  await apiFetch(`/api/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
 }
 
 export async function getGraph(modelId: string): Promise<Model> {
@@ -306,9 +338,13 @@ export async function* streamGeneration(modelId: string, tokenIds: number[], opt
   yield* parseEventStream<GenerationEvent>(res);
 }
 
+/** Which kind of file the aggregate byte counter below is currently attributed to — see apps/api's downloads.py's _non_weight_bytes doc comment for how this is derived (a byte threshold, not a literal per-file name — huggingface_hub's own progress hooks don't expose one). Absent entirely when the backend couldn't classify it (e.g. a metadata lookup failure), in which case the UI falls back to a generic "downloading" label. */
+export type DownloadPhase = "downloading_config" | "downloading_weights";
+
 export interface DownloadProgress {
   downloadedBytes: number;
   totalBytes: number;
+  phase?: DownloadPhase;
 }
 
 export interface DownloadDone {
@@ -316,14 +352,23 @@ export interface DownloadDone {
   manifest: CatalogEntry;
 }
 
+/** Backs both a user-initiated Cancel and a Pause (see cancelDownload) — the stream just ends here either way; which one it was is purely a frontend UI distinction (Cancel resets the form, Pause keeps the repo id around for Resume). */
+export interface DownloadCancelledEvent {
+  cancelled: true;
+}
+
 export interface DownloadError {
   error: string;
 }
 
-export type DownloadEvent = DownloadProgress | DownloadDone | DownloadError;
+export type DownloadEvent = DownloadProgress | DownloadDone | DownloadCancelledEvent | DownloadError;
 
 export function isDownloadDone(event: DownloadEvent): event is DownloadDone {
   return "done" in event && event.done === true;
+}
+
+export function isDownloadCancelledEvent(event: DownloadEvent): event is DownloadCancelledEvent {
+  return "cancelled" in event && event.cancelled === true;
 }
 
 export function isDownloadError(event: DownloadEvent): event is DownloadError {
@@ -342,4 +387,23 @@ export async function* streamDownload(repo: string, revision?: string): AsyncGen
     body: JSON.stringify({ repo, revision: revision ?? "main" }),
   });
   yield* parseEventStream<DownloadEvent>(res);
+}
+
+/**
+ * Backs both Pause and Cancel — huggingface_hub always discards a file's
+ * partial bytes on an interrupted download, so there's no lower-level
+ * distinction between "stop for good" and "stop for now" to make server
+ * side (see apps/api's downloads.py DownloadCancelled doc comment). The
+ * open streamDownload() call for this repo ends with a
+ * DownloadCancelledEvent shortly after this resolves; Resume is just
+ * calling streamDownload(repo) again, which naturally continues (every
+ * already-finished file is skipped server-side, only the one actively
+ * transferring when this was called has to restart).
+ */
+export async function cancelDownload(repo: string): Promise<void> {
+  await apiFetch("/api/models/download/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
 }

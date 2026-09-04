@@ -10,10 +10,12 @@ interface Props {
   /** The currently-loaded model's id, if any — passed straight through to ModelLoader so it's left out of the catalog list. */
   excludeModelId?: string;
   onLoad: (modelId: string, quantization?: "4bit" | "8bit") => void;
+  modelsPerPage: number;
+  showGpuStatus: boolean;
 }
 
 /** Popover version of ModelLoader for switching models mid-session — same catalog list as the first-load screen, minus the currently-loaded model, closing itself once a load is kicked off. Mirrors SettingsPanel's open/close-on-outside-click/Escape shape. */
-export function LoadModelPanel({ open, onClose, status, error, excludeModelId, onLoad }: Props) {
+export function LoadModelPanel({ open, onClose, status, error, excludeModelId, onLoad, modelsPerPage, showGpuStatus }: Props) {
   const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +49,8 @@ export function LoadModelPanel({ open, onClose, status, error, excludeModelId, o
         status={status}
         error={error}
         excludeModelId={excludeModelId}
+        modelsPerPage={modelsPerPage}
+        showGpuStatus={showGpuStatus}
         embedded
         onLoad={(modelId, quantization) => {
           onLoad(modelId, quantization);

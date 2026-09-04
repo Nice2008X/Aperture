@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import fnmatch
 import json
 import queue
 from collections.abc import AsyncIterator
@@ -28,7 +29,20 @@ import os
 # at bar-creation time, but importing early to be safe).
 os.environ.setdefault("TQDM_POSITION", "-1")
 
-from huggingface_hub import snapshot_download  # noqa: E402
+# Xet-backed repos (hf_xet is installed — increasingly the default storage
+# for popular Hub repos) hand the actual transfer to a native Rust download
+# loop, which only special-cases KeyboardInterrupt for stopping early (see
+# huggingface_hub.file_download.xet_get's `except KeyboardInterrupt:
+# abort_xet_session(); raise`) — a DownloadCancelled raised from *our*
+# Python progress callback below doesn't reliably interrupt it, since
+# that's not the mechanism Xet's own cancellation path is built around.
+# Forcing every download through the plain HTTP path keeps Pause/Cancel
+# reliable, at the cost of Xet's dedup/CDN speed advantage. Must be set
+# before huggingface_hub.constants is first imported — it reads the env
+# var once into a module-level constant, not per-call.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+from huggingface_hub import HfApi, snapshot_download  # noqa: E402
 from huggingface_hub.utils import tqdm as hf_tqdm  # noqa: E402
 
 # Only the files a model adapter actually needs — skip .bin duplicates,
@@ -49,6 +63,67 @@ ALLOW_PATTERNS = [
 
 def model_id_for(repo: str) -> str:
     return repo.replace("/", "__")
+
+
+class DownloadCancelled(Exception):
+    """Raised (from inside the progress-tracking tqdm hook below) when a
+    client calls request_cancel() for this repo while its download is in
+    flight. Both "Pause" and "Cancel" in the UI trigger this exact same
+    thing — huggingface_hub always discards a file's partial bytes on any
+    interrupted download (its `_download_to_tmp_and_move` unlinks the temp
+    file in a `finally`, unconditional on why the download stopped), so
+    there's no lower-level distinction between the two to make here. What a
+    frontend "Resume" gets that a fresh download doesn't is every *other*
+    file: snapshot_download skips a file whose destination already exists,
+    so re-calling download_with_progress for the same repo only re-fetches
+    whichever single file was actively transferring at the moment of the
+    interrupt.
+    """
+
+
+# Keyed by repo id — this app loads/downloads one model at a time in
+# practice, but keying by repo (rather than one bare global flag) means a
+# stale cancel from a previous repo can't accidentally abort an unrelated
+# one that happens to start next. _active_downloads gates request_cancel so
+# a cancel click that arrives after (or between) downloads can't linger in
+# _cancel_requested and instantly abort a *future*, unrelated download for
+# the same repo.
+_active_downloads: set[str] = set()
+_cancel_requested: set[str] = set()
+
+
+def request_cancel(repo: str) -> bool:
+    """Marks repo's in-flight download for cancellation. Returns False (and
+    does nothing) if no download for this repo is currently running."""
+    if repo not in _active_downloads:
+        return False
+    _cancel_requested.add(repo)
+    return True
+
+
+def _non_weight_bytes(repo: str, revision: str) -> int | None:
+    """Total size of every ALLOW_PATTERNS file that *isn't* a weights
+    shard — used to tell "downloading model weights" apart from
+    "downloading tokenizer/config files" purely from the byte counter
+    snapshot_download already reports (see download_with_progress's phase
+    logic), since huggingface_hub's own progress hooks don't expose which
+    literal file is in flight (only anonymous, aggregated byte/file
+    counts — the `tqdm_class` passed to `snapshot_download` is never
+    forwarded to the individual per-file downloads it fans out to). A
+    metadata-only Hub API call, no repo content downloaded. Returns None
+    on any failure (network hiccup, gated repo, unexpected response shape)
+    so the caller can fall back to an undifferentiated "downloading"
+    phase instead of blocking the real download on this.
+    """
+    try:
+        info = HfApi().model_info(repo, revision=revision, files_metadata=True)
+        return sum(
+            s.size or 0
+            for s in info.siblings or []
+            if any(fnmatch.fnmatch(s.rfilename, pat) for pat in ALLOW_PATTERNS) and not fnmatch.fnmatch(s.rfilename, "*.safetensors*")
+        )
+    except Exception:  # noqa: BLE001 — best-effort UI enhancement, never worth failing the download over
+        return None
 
 
 def existing_manifest(models_dir: Path, repo: str) -> dict | None:
@@ -86,8 +161,8 @@ def download_sync(models_dir: Path, repo: str, revision: str = "main") -> dict:
 
 
 async def download_with_progress(models_dir: Path, repo: str, revision: str = "main") -> AsyncIterator[dict]:
-    """Yields `{downloadedBytes, totalBytes, currentFile}` while
-    downloading, then exactly one final `{done: True, manifest}` or
+    """Yields `{downloadedBytes, totalBytes, phase}` while downloading, then
+    exactly one final `{done: True, manifest}`, `{cancelled: True}`, or
     `{error: "..."}`. A no-op fast path: if this repo already has a
     manifest, yields the done event immediately without touching the
     network — snapshot_download itself is already incremental (skips
@@ -103,6 +178,8 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
     target_dir = models_dir / model_id_for(repo)
     target_dir.mkdir(parents=True, exist_ok=True)
     progress_queue: queue.Queue = queue.Queue()
+    non_weight_bytes = _non_weight_bytes(repo, revision)
+    _active_downloads.add(repo)
 
     # snapshot_download already aggregates every file's bytes into one real
     # "Downloading bytes" tqdm bar internally (see its _AggregatedTqdm) —
@@ -115,8 +192,29 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
     class _ProgressTqdm(hf_tqdm):
         def update(self, n: int = 1) -> None:
             super().update(n)
+            # Checked on every bar this tqdm_class drives (not just
+            # "Downloading bytes") so a cancel/pause lands promptly
+            # regardless of which phase the download is in when it's
+            # requested — this fires once per network chunk during the
+            # actual transfer (~10KB by default), so in practice this is
+            # sub-second, not "wait for the next file".
+            if repo in _cancel_requested:
+                raise DownloadCancelled(repo)
             if self.desc == "Downloading bytes":
-                progress_queue.put({"downloadedBytes": self.n, "totalBytes": self.total or 0})
+                downloaded = self.n
+                # Small metadata files (config/tokenizer) finish almost
+                # instantly relative to a multi-GB weight shard — once
+                # cumulative transfer bytes pass everything that *isn't* a
+                # weights file, whatever's left flowing in is the weights.
+                # Not literally "this exact file", since up to 8 files
+                # download concurrently (max_workers), but accurate for
+                # the overwhelming common case those tiny files really are
+                # tiny next to the weights.
+                phase = "downloading_weights" if non_weight_bytes is not None and downloaded >= non_weight_bytes else "downloading_config"
+                event: dict = {"downloadedBytes": downloaded, "totalBytes": self.total or 0}
+                if non_weight_bytes is not None:
+                    event["phase"] = phase
+                progress_queue.put(event)
 
     def run() -> None:
         snapshot_download(repo_id=repo, revision=revision, local_dir=target_dir, allow_patterns=ALLOW_PATTERNS, tqdm_class=_ProgressTqdm)
@@ -132,5 +230,14 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
                 await asyncio.sleep(0.2)
         await task  # re-raises anything run() raised
         yield {"done": True, "manifest": _write_manifest(target_dir, repo, revision)}
+    except DownloadCancelled:
+        yield {"cancelled": True}
     except Exception as e:  # noqa: BLE001 — any failure (bad repo id, network error, disk full, ...) becomes one clear event for the client
         yield {"error": str(e)}
+    finally:
+        # Always clear, regardless of how this generator exits (done, error,
+        # or cancelled) — otherwise a resumed download for the same repo
+        # would see its *previous* cancel request still armed and abort on
+        # its very first progress tick.
+        _active_downloads.discard(repo)
+        _cancel_requested.discard(repo)

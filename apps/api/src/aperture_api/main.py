@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Literal
 
 import torch
@@ -18,9 +19,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .downloads import download_with_progress
+from .downloads import download_with_progress, request_cancel
 from .generation import generate_tokens
 from .inference import run_attribution_sweep, run_forward
 from .model_registry import ModelRegistry, NoModelLoadedError
@@ -61,8 +62,71 @@ async def list_models():
     return registry.catalog()
 
 
+def _proc_meminfo() -> dict[str, int]:
+    """Parses /proc/meminfo into a {label: bytes} dict — Linux-only, and
+    silently empty everywhere else, which just skips the unified-memory
+    correction below."""
+    info: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            label, _, rest = line.partition(":")
+            info[label] = int(rest.strip().split()[0]) * 1024  # "12345 kB" -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    return info
+
+
+@app.get("/api/gpu")
+async def gpu_status():
+    """Live VRAM snapshot for the loader screen's fit-check (todo11.txt §6/§7)
+    — cheap enough to poll on every catalog refresh. `mem_get_info` reports
+    the *device's* free/total, not just what this process has allocated, so
+    it reflects other processes sharing the GPU too. Returns available:false
+    (rather than a 5xx) when there's no CUDA device, since the rest of the
+    UI already degrades gracefully without GPU info."""
+    if not torch.cuda.is_available():
+        return {"available": False}
+    device = torch.cuda.current_device()
+    free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+
+    # This app's real deployment target (PLAN.md: "GPU: NVIDIA GB10, 130.6GB
+    # total") is a unified-memory Grace Blackwell box where "GPU memory" IS
+    # coherent system RAM — cudaMemGetInfo's totalBytes there matches
+    # /proc/meminfo's MemTotal exactly. On that hardware, its "free" mirrors
+    # MemFree: raw free pages, *not* counting reclaimable page cache the
+    # kernel would happily evict for a real allocation — the same gap as
+    # `free`'s "free" vs "available" columns. Left as mem_get_info reports
+    # it, the status bar and every card's fit-check read tens of GB as
+    # "used" that a real model load would in fact have available. Detected
+    # by totalBytes matching host MemTotal (within rounding) — a discrete
+    # GPU's dedicated VRAM total never coincides with host RAM, so this is
+    # a no-op there.
+    meminfo = _proc_meminfo()
+    mem_total = meminfo.get("MemTotal")
+    mem_available = meminfo.get("MemAvailable")
+    if mem_total and mem_available and abs(total_bytes - mem_total) / mem_total < 0.05:
+        free_bytes = max(free_bytes, min(mem_available, total_bytes))
+
+    return {
+        "available": True,
+        "name": torch.cuda.get_device_name(device),
+        "totalBytes": total_bytes,
+        "freeBytes": free_bytes,
+        "usedBytes": total_bytes - free_bytes,
+    }
+
+
+# Mirrors the frontend's SAFE_REPO_ID_RE (ModelLoader.tsx) — that one also
+# strips a pasted huggingface.co URL down to "org/model" before it ever gets
+# here, but this is the actual gate: `repo` flows into both a network
+# request to the Hub and (model_id_for) a filesystem directory name, so a
+# request that bypasses the frontend entirely still can't hand this
+# anything other than a well-formed id.
+REPO_ID_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,94}[A-Za-z0-9])?/[A-Za-z0-9]([A-Za-z0-9._-]{0,94}[A-Za-z0-9])?$"
+
+
 class DownloadRequest(BaseModel):
-    repo: str
+    repo: str = Field(pattern=REPO_ID_PATTERN)
     revision: str = "main"
 
 
@@ -78,6 +142,21 @@ async def download_model_route(body: DownloadRequest):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class CancelDownloadRequest(BaseModel):
+    repo: str = Field(pattern=REPO_ID_PATTERN)
+
+
+@app.post("/api/models/download/cancel")
+async def cancel_download_route(body: CancelDownloadRequest):
+    """Backs both Pause and Cancel in the UI — see DownloadCancelled's doc
+    comment in downloads.py for why those are the same request here.
+    request_cancel is a no-op (cancelled: False) if this repo has nothing
+    in flight, e.g. a duplicate click or one that arrived just as the
+    download finished on its own."""
+    cancelled = request_cancel(body.repo)
+    return {"cancelled": cancelled}
 
 
 @app.post("/api/models/{model_id}/load")
@@ -96,10 +175,30 @@ async def load_model(model_id: str, body: LoadRequest = LoadRequest()):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.post("/api/models/{model_id}/load/cancel")
+async def cancel_load_route(model_id: str):
+    """Stops an in-flight /load — see ModelRegistry.request_cancel_load /
+    LoadCancelled for how that actually interrupts from_pretrained."""
+    cancelled = registry.request_cancel_load(model_id)
+    return {"cancelled": cancelled}
+
+
 @app.post("/api/models/{model_id}/unload")
 async def unload_model(model_id: str):
     await registry.unload()
     return {"status": "unloaded"}
+
+
+@app.delete("/api/models/{model_id}")
+async def delete_model(model_id: str):
+    """Unloads (if resident) and removes a downloaded model's directory from
+    data/models/ entirely — the catalog's "delete" action, not to be
+    confused with /unload which just frees the GPU and keeps the files."""
+    try:
+        await registry.delete(model_id)
+    except FileNotFoundError:
+        raise HTTPException(404, f"No model '{model_id}' in data/models.")
+    return {"status": "deleted"}
 
 
 @app.get("/api/models/{model_id}/graph")

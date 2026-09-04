@@ -2,8 +2,12 @@ export {
   setApiBase,
   getApiBase,
   listModels,
+  getGpuStatus,
   loadModel,
+  cancelLoad,
+  LoadCancelledError,
   unloadModel,
+  deleteModel,
   getGraph,
   getWeightTensor,
   runInference,
@@ -11,9 +15,25 @@ export {
   streamGeneration,
   isGenerationError,
   streamDownload,
+  cancelDownload,
   isDownloadDone,
+  isDownloadCancelledEvent,
   isDownloadError,
 } from "./http.js";
-export type { CatalogEntry, LoadDtype, GenerationOptions, GenerationEvent, GenerationToken, GenerationError, DownloadEvent, DownloadProgress, DownloadDone, DownloadError } from "./http.js";
+export type {
+  CatalogEntry,
+  GpuStatus,
+  LoadDtype,
+  GenerationOptions,
+  GenerationEvent,
+  GenerationToken,
+  GenerationError,
+  DownloadEvent,
+  DownloadPhase,
+  DownloadProgress,
+  DownloadDone,
+  DownloadCancelledEvent,
+  DownloadError,
+} from "./http.js";
 export { RemoteWeightProvider } from "./weightProvider.js";
 export { BackendAdapter } from "./adapter.js";

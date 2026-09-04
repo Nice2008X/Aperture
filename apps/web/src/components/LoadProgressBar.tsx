@@ -12,6 +12,13 @@ export interface UnifiedLoadProgress {
 
 const PHASE_LABELS: Record<string, string> = {
   downloading: "Downloading from Hugging Face",
+  // Not a literal "this exact file is now downloading" — huggingface_hub's
+  // own progress hooks never expose one (see apps/api's downloads.py
+  // _non_weight_bytes doc comment). Derived from a byte threshold instead:
+  // once cumulative transfer bytes pass everything that isn't a weights
+  // shard, whatever's still incoming almost certainly is one.
+  downloading_config: "Downloading tokenizer & config files",
+  downloading_weights: "Downloading model weights",
   loading_weights: "Loading weights onto GPU",
   building_graph: "Building architecture graph",
 };

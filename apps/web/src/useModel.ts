@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { LoadProgressEvent, Model, ModelAdapter, ModelMetadata, ModelSource, WeightProvider } from "@aperture/model-ir";
 import { peekModelType } from "@aperture/hf-client";
-import { listModels } from "@aperture/api-client";
+import { listModels, LoadCancelledError } from "@aperture/api-client";
 import { loadTokenizer, type Tokenizer } from "@aperture/tokenizer";
 import { ADAPTERS } from "./adapters.js";
 
@@ -53,6 +53,17 @@ export function useModel() {
 
       setState({ status: "ready", model, metadata, weightProvider, adapter, source, tokenizer });
     } catch (err) {
+      // A Stop click (ModelLoader's cancelLoad) — not a real failure, so
+      // this goes back to idle exactly like reset() rather than surfacing
+      // an error banner. ModelLoader itself never unmounts across this
+      // transition (App.tsx keeps rendering it for any non-"ready"
+      // status), so its own `selectedId` is still whatever card the user
+      // clicked Load from — that card just re-renders expanded again,
+      // with nothing to reset for it.
+      if (err instanceof LoadCancelledError) {
+        setState({ status: "idle" });
+        return;
+      }
       setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
     }
   }, []);
