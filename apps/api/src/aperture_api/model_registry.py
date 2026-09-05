@@ -32,6 +32,30 @@ Quantization = Literal["4bit", "8bit"] | None
 MAX_CACHED_RUNS = 5
 
 
+def _native_quantization_method(path: Path) -> str | None:
+    """Whether this checkpoint already ships pre-quantized — its own
+    config.json carries a `quantization_config` baked in at save time
+    (FP8, GPTQ, AWQ, ...) — in which case layering our own
+    BitsAndBytesConfig on top via `quantization_config=` conflicts with it:
+    transformers refuses the from_pretrained call outright ("you are
+    passing a BitsAndBytesConfig ... but the model is quantized with
+    FineGrainedFP8Config", the exact class name varying by scheme).
+
+    Read directly off config.json rather than an already-loaded model's
+    `.config` — this needs an answer *before* deciding what
+    quantization_config (if any) is even safe to pass to from_pretrained.
+    Returns the scheme's own `quant_method` (e.g. "fp8") for display, or
+    None if the checkpoint isn't pre-quantized (the overwhelming common
+    case) or config.json couldn't be read.
+    """
+    try:
+        config = json.loads((path / "config.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    qc = config.get("quantization_config")
+    return qc.get("quant_method") if isinstance(qc, dict) else None
+
+
 def _quantization_config(quantization: Quantization, compute_dtype: torch.dtype) -> BitsAndBytesConfig | None:
     if quantization == "4bit":
         # NF4 (over plain int4) and double-quant (quantizing the
@@ -164,6 +188,11 @@ class ModelRegistry:
                 # it can re-request the same thing and hit load_with_progress's
                 # fast path, instead of mismatching and triggering a real reload.
                 entry["loadedQuantization"] = self._loaded.quantization if entry["loaded"] else None
+                # Lets the frontend disable the 4-bit/8-bit precision
+                # picker for a checkpoint that's already pre-quantized —
+                # see _native_quantization_method's doc comment for why
+                # bitsandbytes can't be layered on top of it anyway.
+                entry["nativeQuantization"] = _native_quantization_method(d)
                 entries.append(entry)
         return entries
 
@@ -225,7 +254,18 @@ class ModelRegistry:
                 return bar
 
             torch_dtype = _TORCH_DTYPES[dtype]
-            quant_config = _quantization_config(quantization, torch_dtype)
+            # A checkpoint that's already pre-quantized (its own config.json
+            # carries a quantization_config — FP8, GPTQ, ...) can't also
+            # take our BitsAndBytesConfig; passing both is what transformers
+            # refuses with "you are passing a BitsAndBytesConfig ... but the
+            # model is quantized with FineGrainedFP8Config". The catalog
+            # already disables 4-bit/8-bit for such an entry (see
+            # ModelRegistry.catalog's nativeQuantization field), but this is
+            # the actual enforcement point — belt-and-suspenders against a
+            # stale frontend or a direct API call still requesting one:
+            # silently skip it and load at the checkpoint's own native
+            # precision instead of crashing.
+            quant_config = None if _native_quantization_method(path) is not None else _quantization_config(quantization, torch_dtype)
 
             def run() -> torch.nn.Module:
                 previous_hook = set_tqdm_hook(hook)

@@ -102,29 +102,42 @@ def request_cancel(repo: str) -> bool:
     return True
 
 
-def _non_weight_bytes(repo: str, revision: str) -> int | None:
-    """Total size of every ALLOW_PATTERNS file that *isn't* a weights
-    shard — used to tell "downloading model weights" apart from
-    "downloading tokenizer/config files" purely from the byte counter
-    snapshot_download already reports (see download_with_progress's phase
+def _repo_download_sizes(repo: str, revision: str) -> tuple[int | None, int | None]:
+    """(nonWeightBytes, totalBytes) for every ALLOW_PATTERNS file in this
+    repo, from a single metadata-only Hub API call (no repo content
+    downloaded — safe and cheap to run before committing to a real
+    download; empirically ~0.3s regardless of repo size, since it's one
+    JSON round trip, not proportional to file sizes).
+
+    nonWeightBytes tells "downloading model weights" apart from
+    "downloading tokenizer/config files" purely from the aggregate byte
+    counter snapshot_download reports (see download_with_progress's phase
     logic), since huggingface_hub's own progress hooks don't expose which
     literal file is in flight (only anonymous, aggregated byte/file
     counts — the `tqdm_class` passed to `snapshot_download` is never
-    forwarded to the individual per-file downloads it fans out to). A
-    metadata-only Hub API call, no repo content downloaded. Returns None
-    on any failure (network hiccup, gated repo, unexpected response shape)
-    so the caller can fall back to an undifferentiated "downloading"
-    phase instead of blocking the real download on this.
+    forwarded to the individual per-file downloads it fans out to).
+
+    totalBytes is a real, stable upfront total for the whole download —
+    used instead of snapshot_download's own internal running total, which
+    starts at 0 and grows in bursts as its concurrent worker pool
+    (max_workers) starts new files, *ahead of* bytes actually arriving for
+    them. Reporting that raw total straight to the client made the
+    displayed percentage visibly jump backward whenever a new file started
+    mid-download; a real total known from byte one never does.
+
+    Both are None on any failure (network hiccup, gated repo, unexpected
+    response shape) — the caller falls back to an undifferentiated
+    "downloading" phase and snapshot_download's own (occasionally jumpy)
+    total instead of blocking the real download on this.
     """
     try:
         info = HfApi().model_info(repo, revision=revision, files_metadata=True)
-        return sum(
-            s.size or 0
-            for s in info.siblings or []
-            if any(fnmatch.fnmatch(s.rfilename, pat) for pat in ALLOW_PATTERNS) and not fnmatch.fnmatch(s.rfilename, "*.safetensors*")
-        )
+        matching = [s for s in info.siblings or [] if any(fnmatch.fnmatch(s.rfilename, pat) for pat in ALLOW_PATTERNS)]
+        non_weight_bytes = sum(s.size or 0 for s in matching if not fnmatch.fnmatch(s.rfilename, "*.safetensors*"))
+        total_bytes = sum(s.size or 0 for s in matching)
+        return non_weight_bytes, total_bytes
     except Exception:  # noqa: BLE001 — best-effort UI enhancement, never worth failing the download over
-        return None
+        return None, None
 
 
 def check_model_support(repo: str, revision: str = "main") -> dict:
@@ -210,8 +223,12 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
     target_dir = models_dir / model_id_for(repo)
     target_dir.mkdir(parents=True, exist_ok=True)
     progress_queue: queue.Queue = queue.Queue()
-    non_weight_bytes = _non_weight_bytes(repo, revision)
+    non_weight_bytes, real_total_bytes = _repo_download_sizes(repo, revision)
     _active_downloads.add(repo)
+    # Only exercised as a fallback when real_total_bytes is None (the
+    # metadata call above failed) — see the `else` branch below for why
+    # this needs tracking at all.
+    max_ratio_seen = 0.0
 
     # snapshot_download already aggregates every file's bytes into one real
     # "Downloading bytes" tqdm bar internally (see its _AggregatedTqdm) —
@@ -223,6 +240,7 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
     # tqdm_class — desc is what tells these apart.
     class _ProgressTqdm(hf_tqdm):
         def update(self, n: int = 1) -> None:
+            nonlocal max_ratio_seen
             super().update(n)
             # Checked on every bar this tqdm_class drives (not just
             # "Downloading bytes") so a cancel/pause lands promptly
@@ -243,7 +261,26 @@ async def download_with_progress(models_dir: Path, repo: str, revision: str = "m
                 # the overwhelming common case those tiny files really are
                 # tiny next to the weights.
                 phase = "downloading_weights" if non_weight_bytes is not None and downloaded >= non_weight_bytes else "downloading_config"
-                event: dict = {"downloadedBytes": downloaded, "totalBytes": self.total or 0}
+                if real_total_bytes is not None:
+                    total = real_total_bytes
+                else:
+                    # Fallback: snapshot_download's own aggregate total
+                    # (self.total) grows in bursts as its worker pool
+                    # starts new files, ahead of bytes actually arriving
+                    # for them — reporting it as-is would make the ratio
+                    # visibly fall backward. Shrinks the *reported* total
+                    # only (downloaded is always the real count) just
+                    # enough to hold the ratio at its own high-water mark
+                    # until real progress organically catches back up
+                    # past it.
+                    live_total = self.total or 0
+                    ratio = downloaded / live_total if live_total else 0.0
+                    if ratio < max_ratio_seen:
+                        total = downloaded / max_ratio_seen
+                    else:
+                        max_ratio_seen = ratio
+                        total = live_total
+                event: dict = {"downloadedBytes": downloaded, "totalBytes": total}
                 if non_weight_bytes is not None:
                     event["phase"] = phase
                 progress_queue.put(event)

@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .downloads import check_model_support, download_with_progress, request_cancel
-from .generation import generate_tokens
+from .generation import apply_chat_template, generate_tokens, generation_defaults, has_chat_template
 from .inference import run_attribution_sweep, run_forward
 from .model_registry import ModelRegistry, NoModelLoadedError
 from .paths import MODELS_DIR
@@ -400,6 +400,49 @@ async def attribution_sweep(body: AttributionSweepRequest):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/models/{model_id}/generation-config")
+async def generation_config_route(model_id: str):
+    """Everything the frontend needs to initialize its Generate controls
+    for the just-loaded model in one round trip: whether the tokenizer
+    defines a chat_template at all (a base/completion checkpoint typically
+    doesn't — decides whether "wrap in chat template" is offered), plus
+    this checkpoint's own sampling defaults (generation_defaults — sourced
+    from generation_config.json wherever the model's authors specified
+    one, this app's own defaults otherwise). Settings' generation sliders
+    seed from this on every model load and can reset back to it later."""
+    try:
+        loaded = registry.require_current(model_id)
+    except NoModelLoadedError as e:
+        raise HTTPException(409, str(e) or f"Model '{model_id}' is not loaded — call /load first.")
+    return {"hasChatTemplate": has_chat_template(loaded), **generation_defaults(loaded)}
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatTemplateRequest(BaseModel):
+    messages: list[ChatMessage]
+
+
+@app.post("/api/models/{model_id}/chat-template")
+async def apply_chat_template_route(model_id: str, body: ChatTemplateRequest):
+    """Wraps `messages` in this model's real chat format and tokenizes the
+    result server-side (via transformers' own Jinja implementation) —
+    returns plain token ids so the frontend can feed them straight into
+    /api/generate exactly like a raw-encoded prompt."""
+    try:
+        loaded = registry.require_current(model_id)
+    except NoModelLoadedError as e:
+        raise HTTPException(409, str(e) or f"Model '{model_id}' is not loaded — call /load first.")
+    try:
+        token_ids = apply_chat_template(loaded, [m.model_dump() for m in body.messages])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"tokenIds": token_ids}
+
+
 class GenerateRequest(BaseModel):
     modelId: str
     tokenIds: list[int]
@@ -407,6 +450,13 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.7
     topP: float = 1.0
     topK: int = 0
+    # Defaults here are only a fallback for a caller that omits the field
+    # entirely — the frontend always sends this model's own
+    # generation_defaults() values (or the user's override of them)
+    # explicitly. See generation.py's generation_defaults doc comment for
+    # why 1.1/3, not 1.0/0 (no-op), are the safer bare defaults.
+    repetitionPenalty: float = 1.1
+    noRepeatNgramSize: int = 3
 
 
 @app.post("/api/generate")
@@ -418,15 +468,28 @@ async def generate(body: GenerateRequest):
     except NoModelLoadedError as e:
         raise HTTPException(409, str(e) or f"Model '{body.modelId}' is not loaded — call /load first.")
 
-    max_new_tokens = min(max(1, body.maxNewTokens), 512)
+    # Bounded by this model's own trained context length (config.json's
+    # max_position_embeddings, already captured as loaded.ir.config.context_length
+    # at load time — see graph_builder.py) rather than one flat number for
+    # every model: a short-context checkpoint can't safely generate as far
+    # as a long-context one, and the frontend's Settings panel offers up to
+    # exactly this same number (see ModelInfoBar's contextLength). Also
+    # leaves at least 1 token of room even if the prompt itself already
+    # fills (or exceeds) the context window, rather than clamping to 0.
+    room = max(1, loaded.ir.config.context_length - len(body.tokenIds))
+    max_new_tokens = min(max(1, body.maxNewTokens), room)
     temperature = max(0.0, body.temperature)
     top_p = min(max(body.topP, 0.0), 1.0)
     top_k = max(0, body.topK)
+    repetition_penalty = min(max(body.repetitionPenalty, 0.1), 5.0)
+    no_repeat_ngram_size = min(max(body.noRepeatNgramSize, 0), 20)
 
     async def event_stream():
         try:
             async with loaded.inference_lock:
-                for token_id, text, is_last in generate_tokens(loaded, body.tokenIds, max_new_tokens, temperature, top_p, top_k):
+                for token_id, text, is_last in generate_tokens(
+                    loaded, body.tokenIds, max_new_tokens, temperature, top_p, top_k, repetition_penalty, no_repeat_ngram_size
+                ):
                     payload = json.dumps({"tokenId": token_id, "text": text, "done": is_last})
                     yield f"data: {payload}\n\n"
                     # Without this, the (synchronous, GPU-bound) loop above

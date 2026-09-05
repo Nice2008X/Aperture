@@ -4,7 +4,7 @@ import { peekModelType } from "@aperture/hf-client";
 import { listModels, LoadCancelledError } from "@aperture/api-client";
 import { loadTokenizer, type Tokenizer } from "@aperture/tokenizer";
 import { ADAPTERS } from "./adapters.js";
-import { useLocalStorageState } from "./useLocalStorageState.js";
+import { useSessionStorageState } from "./useSessionStorageState.js";
 
 export interface ModelState {
   status: "idle" | "loading" | "ready" | "error";
@@ -22,13 +22,23 @@ export interface ModelState {
 
 export function useModel() {
   const [state, setState] = useState<ModelState>({ status: "idle" });
-  // Persisted so a refresh can tell "the user explicitly came back to the
-  // loader screen" (App's goHome, via reset() below) apart from "no model
-  // has ever been loaded in this browser yet" — only the former should
-  // suppress the auto-resume effect further down; a first-ever visit (or
-  // any refresh once a model IS loaded) should still resume whatever's
-  // resident on the backend, same as before.
-  const [stayOnLoaderScreen, setStayOnLoaderScreen] = useLocalStorageState("app:stayOnLoaderScreen", false);
+  // Persisted (session-scoped, not localStorage) so a same-tab refresh can
+  // tell "the user explicitly came back to the loader screen a moment ago"
+  // (App's goHome, via reset() below) apart from "no model has ever been
+  // loaded in this browser yet" — only the former should suppress the
+  // auto-resume effect further down. sessionStorage specifically (not
+  // localStorage) matters here: this flag is meant to be a short-lived,
+  // this-tab-only marker, not a permanent one — a plain localStorage
+  // version stays true indefinitely, shared across every tab/window of
+  // this origin, until the next successful load happens to clear it
+  // (which might be days later, or never). That meant a browser crash —
+  // or even just opening a second tab — any time after the user had ever
+  // once clicked Home would permanently stop the resume-on-mount effect
+  // below from firing, even though the backend still had a model resident
+  // the whole time: a fresh tab/relaunch has no sessionStorage to inherit,
+  // so it starts clean and correctly resumes; only a genuine same-tab
+  // refresh right after Home still suppresses it.
+  const [stayOnLoaderScreen, setStayOnLoaderScreen] = useSessionStorageState("app:stayOnLoaderScreen", false);
 
   const loadFromSource = useCallback(async (source: ModelSource) => {
     setState({ status: "loading" });

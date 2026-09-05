@@ -106,6 +106,24 @@ def _is_activation(cls_name: str) -> bool:
     return any(k in lname for k in ("silu", "gelu", "relu", "swish", "mish", "activation"))
 
 
+def _cfg_get(cfg: object, name: str, default: object) -> object:
+    """getattr(cfg, name, default), but also treats a config attribute that
+    *raises* instead of returning a value as "unavailable", the same as a
+    plain missing one. Newer transformers configs (Gemma4) make some fields
+    (head_dim, num_key_value_heads, ...) genuinely vary per layer, and raise
+    AmbiguousGlobalPerLayerAttributeError — a RuntimeError, not an
+    AttributeError — when asked for one global value; plain getattr(...,
+    default) doesn't catch that. Every value read this way is best-effort
+    single-number metadata for generic display/reproduction (see
+    build()'s head_dim comment for how a wrong guess here gets caught
+    downstream), never worth failing the whole graph build over.
+    """
+    try:
+        return getattr(cfg, name, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
 _Q_NAMES = {"q_proj", "wq", "query"}
 _K_NAMES = {"k_proj", "wk", "key"}
 _V_NAMES = {"v_proj", "wv", "value"}
@@ -295,7 +313,9 @@ class GraphBuilder:
             )
             self._hook(qkv_id, mod)
             q_id = k_id = qkv_id
+            q_out_features = None
         else:
+            q_out_features = None
             for role, ntype, label in (("q", "q_projection", "Q Projection"), ("k", "k_projection", "K Projection"), ("v", "v_projection", "V Projection")):
                 if role not in linears:
                     continue
@@ -310,6 +330,7 @@ class GraphBuilder:
                 self._hook(nid, mod)
                 if role == "q":
                     q_id = nid
+                    q_out_features = mod.out_features
                 if role == "k":
                     k_id = nid
 
@@ -336,7 +357,24 @@ class GraphBuilder:
             # packed [Q|K|V] width, not Q alone, so the reproduction's
             # "view as numHeads*headDim" assumption doesn't hold — no
             # derivation is safer than a silently wrong one (see PLAN.md §10).
-            if q_id != k_id:
+            #
+            # Also skipped whenever the q projection's real out_features
+            # isn't exactly numHeads*headDim — not just fused QKV can widen
+            # it. Qwen3.5's gated attention (attn_output_gate: true) packs a
+            # same-width sigmoid gate into q_proj too (per head: [q_head_dim
+            # | gate_head_dim], doubling out_features), split back apart by
+            # torch.chunk *after* q_proj but *before* rope is ever applied —
+            # so the captured q_proj activation genuinely isn't "pre-rope Q"
+            # at all, it's "pre-rope Q, interleaved with an unrelated gate".
+            # Reshaping that as [numHeads, headDim] doesn't just crash on
+            # size (it did, until this check — RuntimeError: shape [...] is
+            # invalid for input of size ...) — it would silently produce
+            # wrong numbers even if the width happened to still divide
+            # evenly, so this is caught the same conservative way as the
+            # fused-QKV case, not patched to specifically special-case one
+            # more architecture.
+            q_width_is_pure = q_out_features is None or q_out_features == num_heads * head_dim
+            if q_id != k_id and q_width_is_pure:
                 self.ropes.append(RopeDerivation(node_id=rope_id, q_node_id=q_id, num_heads=num_heads, head_dim=head_dim, rope_theta=rope_theta))
             into_o = rope_id
 
@@ -491,15 +529,13 @@ class GraphBuilder:
         above), so inference.py instead aliases its activation straight
         from `node_id`'s own real hook output, which already *is* exactly
         this quantity.
-        """
-        self.is_moe = True
-        self._node(
-            node_id, "moe_layer", "Mixture of Experts", parent_id,
-            inputs=[TensorSpec(dims=seq_h)], outputs=[TensorSpec(dims=seq_h)],
-            metadata={"numExperts": num_experts, "numExpertsPerTok": top_k},
-        )
-        self._hook(node_id, module)
 
+        Resolves router/experts/shared-expert from `module`'s own children —
+        the shape every MoE architecture seen so far groups them under one
+        wrapper submodule for. See _build_moe_from_siblings for the one
+        that doesn't (Gemma4: router/experts are direct decoder-layer
+        children, not nested in a wrapper at all).
+        """
         router_name = router_mod = None
         experts_name = experts_mod = None
         shared_name = shared_mod = None
@@ -520,6 +556,80 @@ class GraphBuilder:
                 if isinstance(mod, nn.Linear) and mod.out_features == num_experts:
                     router_name, router_mod = name, mod
                     break
+
+        return self._build_moe_nodes(
+            node_id, path, module, parent_id, seq_h, num_experts, top_k, expert_intermediate_size, entry_feed,
+            router_name, router_mod, experts_name, experts_mod, shared_name, shared_mod,
+        )
+
+    def _build_moe_from_siblings(
+        self,
+        node_id: str,
+        path: str,
+        parent_id: str,
+        seq_h: list[int | str],
+        num_experts: int,
+        top_k: int,
+        expert_intermediate_size: int,
+        entry_feed: str,
+        router_name: str,
+        router_mod: nn.Module,
+        experts_name: str,
+        experts_mod: nn.Module,
+        dense_name: str | None,
+        dense_mod: nn.Module | None,
+    ) -> str:
+        """Gemma4-style MoE: `router`/`experts` are direct decoder-layer
+        children (siblings of `self_attn`/`mlp`), not grouped under one MoE
+        wrapper module the way every other architecture _build_moe has seen
+        is — so there's no single container to resolve them from, or to
+        hook for this node's own activation (Gemma4TextExperts.forward()
+        fills that second role instead: it's the real module whose output
+        *is* "the routed experts' weighted sum", exactly what `node_id`
+        represents here).
+
+        Gemma4's dense `mlp` branch also isn't a fallback for an unrouted
+        token the way a `shared_expert` is elsewhere — it runs
+        unconditionally for every token, in parallel with the routed
+        experts, and the two (independently normed) outputs are summed.
+        Structurally that's exactly _build_moe's existing shared_expert
+        case, so `dense_mod` is threaded into that same slot rather than
+        given its own bespoke handling.
+        """
+        return self._build_moe_nodes(
+            node_id, path, experts_mod, parent_id, seq_h, num_experts, top_k, expert_intermediate_size, entry_feed,
+            router_name, router_mod, experts_name, experts_mod, dense_name, dense_mod,
+        )
+
+    def _build_moe_nodes(
+        self,
+        node_id: str,
+        path: str,
+        hook_target: nn.Module,
+        parent_id: str,
+        seq_h: list[int | str],
+        num_experts: int,
+        top_k: int,
+        expert_intermediate_size: int,
+        entry_feed: str,
+        router_name: str | None,
+        router_mod: nn.Module | None,
+        experts_name: str | None,
+        experts_mod: nn.Module | None,
+        shared_name: str | None,
+        shared_mod: nn.Module | None,
+    ) -> str:
+        """The actual node/edge building shared by _build_moe (wrapper-
+        module architectures) and _build_moe_from_siblings (Gemma4) once
+        each has resolved router_mod/experts_mod/shared_mod its own way —
+        see both callers' doc comments for what differs and why."""
+        self.is_moe = True
+        self._node(
+            node_id, "moe_layer", "Mixture of Experts", parent_id,
+            inputs=[TensorSpec(dims=seq_h)], outputs=[TensorSpec(dims=seq_h)],
+            metadata={"numExperts": num_experts, "numExpertsPerTok": top_k},
+        )
+        self._hook(node_id, hook_target)
 
         if router_mod is not None:
             router_id = f"{node_id}.router"
@@ -575,7 +685,7 @@ class GraphBuilder:
             inputs=[TensorSpec(dims=seq_h)] * len(combine_inputs), outputs=[TensorSpec(dims=seq_h)],
             metadata={
                 "note": "The weighted sum of the routed experts' outputs"
-                + (", plus the shared expert's (sigmoid-gated) contribution." if shared_out_id is not None else ".")
+                + (", plus the always-on shared/dense branch's contribution." if shared_out_id is not None else ".")
             },
         )
         for src in combine_inputs:
@@ -586,11 +696,31 @@ class GraphBuilder:
     # -- top-level build ------------------------------------------------------
 
     def build(self) -> BuiltGraph:
-        cfg = self.model.config
+        # A multimodal checkpoint's top-level config (e.g. Gemma4Config,
+        # Qwen3_5Config) is a composite wrapper with no hidden_size/
+        # num_attention_heads/etc. of its own — those live on its nested
+        # text_config instead. AutoModelForCausalLM resolves some such
+        # families (Qwen3.5) straight to a dedicated text-only ...ForCausalLM
+        # class whose .config is already the flattened text_config, but
+        # others (Gemma4 — no such class exists) load as the full
+        # conditional-generation model, .config and all. Falling back to
+        # .text_config whenever present covers both without needing to know
+        # which case a given family is.
+        cfg = getattr(self.model.config, "text_config", None) or self.model.config
         H = int(cfg.hidden_size)
         num_layers = int(cfg.num_hidden_layers)
         num_heads = int(cfg.num_attention_heads)
-        head_dim = int(getattr(cfg, "head_dim", H // num_heads))
+        # Some newer configs (Gemma4) make head_dim a genuinely per-layer-
+        # varying value (e.g. wider heads on its sparser "global" attention
+        # layers than on its sliding-window ones) — _cfg_get's fallback here
+        # is then just a best-effort single number passed into every
+        # layer's _build_attention call regardless of its real per-layer
+        # head_dim; wherever it's actually wrong for a given layer, that
+        # layer's real q-projection width won't match num_heads * head_dim,
+        # and the same guard that already protects fused/gated Q
+        # projections (see _build_attention's q_width_is_pure) skips
+        # reproducing RoPE for it rather than displaying wrong numbers.
+        head_dim = int(_cfg_get(cfg, "head_dim", H // num_heads))
         seq_h: list[int | str] = ["sequence_length", H]
 
         # transformers >=4.54 moved rope_theta off the config's top level and
@@ -598,19 +728,19 @@ class GraphBuilder:
         # expose it as a flat `rope_theta` attribute) — check both. Needed
         # per-layer below (for each attention's rope derivation), so this
         # has to happen before the layer loop rather than after it.
-        rope_params = getattr(cfg, "rope_parameters", None) or {}
+        rope_params = _cfg_get(cfg, "rope_parameters", None) or {}
         rope_theta = rope_params.get("rope_theta") if isinstance(rope_params, dict) else None
         if rope_theta is None:
-            rope_theta = float(getattr(cfg, "rope_theta", 10000.0))
+            rope_theta = float(_cfg_get(cfg, "rope_theta", 10000.0))
 
         # MoE config, read once regardless of whether this model actually
         # has MoE layers — harmless on a dense model since _build_moe (the
         # only place these are used) then simply never runs. Field names
         # vary slightly across architectures (num_local_experts predates
         # num_experts on some configs), hence the fallbacks.
-        num_experts = int(getattr(cfg, "num_experts", getattr(cfg, "num_local_experts", 0)) or 0)
-        experts_per_tok = int(getattr(cfg, "num_experts_per_tok", 1) or 1)
-        expert_intermediate_size = int(getattr(cfg, "moe_intermediate_size", getattr(cfg, "intermediate_size", 4 * H)) or (4 * H))
+        num_experts = int(_cfg_get(cfg, "num_experts", _cfg_get(cfg, "num_local_experts", 0)) or 0)
+        experts_per_tok = int(_cfg_get(cfg, "num_experts_per_tok", 1) or 1)
+        expert_intermediate_size = int(_cfg_get(cfg, "moe_intermediate_size", _cfg_get(cfg, "intermediate_size", 4 * H)) or (4 * H))
 
         self._node("model", "model", self.display_name, None)
         self._node("input", "input", "Input tokens", "model", outputs=[TensorSpec(dims=["sequence_length"])])
@@ -656,6 +786,14 @@ class GraphBuilder:
             attn_entry = None
             ffn_entry = None
             ffn_is_moe = False
+            # Gemma4-style: `router`/`experts` sit as direct decoder-layer
+            # children alongside (not nested inside, and not instead of) a
+            # dense `mlp` — see _build_moe_from_siblings' doc comment.
+            # Classified separately from ffn_entry's "MLP or MoE wrapper"
+            # check above so a real dense `mlp` on the same layer doesn't
+            # get misread as this architecture's whole FFN.
+            moe_router_entry = None
+            moe_experts_entry = None
             norms: list[tuple[str, nn.Module]] = []
             other_children: list[tuple[str, nn.Module]] = []
             for name, mod in layer.named_children():
@@ -665,6 +803,10 @@ class GraphBuilder:
                     attn_entry = (name, mod)
                 elif is_norm:
                     norms.append((name, mod))
+                elif "Router" in cname:
+                    moe_router_entry = (name, mod)
+                elif "Experts" in cname:
+                    moe_experts_entry = (name, mod)
                 elif "MLP" in cname or "FeedForward" in cname or "MoE" in cname or "Moe" in cname:
                     ffn_entry = (name, mod)
                     ffn_is_moe = "MoE" in cname or "Moe" in cname
@@ -708,13 +850,28 @@ class GraphBuilder:
                 ffn_feed = norm_id
 
             block_out = res1_out
-            if ffn_entry is not None:
+            if moe_experts_entry is not None and num_experts > 0:
+                ename, emod = moe_experts_entry
+                rname, rmod = moe_router_entry if moe_router_entry is not None else (None, None)
+                dense_name, dense_mod = ffn_entry if ffn_entry is not None else (None, None)
+                ffn_id = f"{b}.ffn"
+                ffn_out_id = self._build_moe_from_siblings(
+                    ffn_id, layer_path, b, seq_h, num_experts, experts_per_tok, expert_intermediate_size, ffn_feed,
+                    rname, rmod, ename, emod, dense_name, dense_mod,
+                )
+                res2_id = f"{b}.res2"
+                self._node(res2_id, "residual", "Residual Add", b, inputs=[TensorSpec(dims=seq_h), TensorSpec(dims=seq_h)], outputs=[TensorSpec(dims=seq_h)])
+                self._edge(ffn_out_id, res2_id)
+                self._edge(res1_out, res2_id, "skip")
+                self.adds.append((res2_id, ffn_out_id, res1_out))
+                block_out = res2_id
+            elif ffn_entry is not None:
                 fname, fmod = ffn_entry
                 ffn_id = f"{b}.ffn"
                 if ffn_is_moe and num_experts > 0:
                     ffn_out_id = self._build_moe(ffn_id, f"{layer_path}.{fname}", fmod, b, seq_h, num_experts, experts_per_tok, expert_intermediate_size, ffn_feed)
                 else:
-                    ffn_out_id = self._build_ffn(ffn_id, f"{layer_path}.{fname}", fmod, b, seq_h, int(getattr(cfg, "intermediate_size", 4 * H)), ffn_feed)
+                    ffn_out_id = self._build_ffn(ffn_id, f"{layer_path}.{fname}", fmod, b, seq_h, int(_cfg_get(cfg, "intermediate_size", 4 * H)), ffn_feed)
                 res2_id = f"{b}.res2"
                 self._node(res2_id, "residual", "Residual Add", b, inputs=[TensorSpec(dims=seq_h), TensorSpec(dims=seq_h)], outputs=[TensorSpec(dims=seq_h)])
                 self._edge(ffn_out_id, res2_id)
@@ -749,7 +906,7 @@ class GraphBuilder:
 
         vocab_size = int(cfg.vocab_size)
         lm_head_entry = next(((name, mod) for name, mod in self.model.named_modules() if name.endswith("lm_head") and isinstance(mod, nn.Linear)), None)
-        tied = bool(getattr(cfg, "tie_word_embeddings", False))
+        tied = bool(_cfg_get(cfg, "tie_word_embeddings", False))
         if lm_head_entry is not None:
             _, lm_head_mod = lm_head_entry
             param_path = embed_path if tied else lm_head_entry[0]
@@ -775,18 +932,18 @@ class GraphBuilder:
         self._edge(output_source, "output")
 
         model_config = ModelConfig(
-            model_type=str(getattr(cfg, "model_type", "unknown")),
+            model_type=str(_cfg_get(cfg, "model_type", "unknown")),
             num_layers=num_layers,
-            num_heads=int(cfg.num_attention_heads),
+            num_heads=num_heads,
             hidden_size=H,
-            intermediate_size=int(getattr(cfg, "intermediate_size", 4 * H)),
+            intermediate_size=int(_cfg_get(cfg, "intermediate_size", 4 * H)),
             vocab_size=vocab_size,
-            context_length=int(getattr(cfg, "max_position_embeddings", 4096)),
+            context_length=int(_cfg_get(cfg, "max_position_embeddings", 4096)),
             extra={
-                "numKeyValueHeads": int(getattr(cfg, "num_key_value_heads", cfg.num_attention_heads)),
+                "numKeyValueHeads": int(_cfg_get(cfg, "num_key_value_heads", num_heads)),
                 "ropeTheta": float(rope_theta),
-                "rmsNormEps": float(getattr(cfg, "rms_norm_eps", getattr(cfg, "layer_norm_eps", 1e-6))),
-                "activationFunction": str(getattr(cfg, "hidden_act", "silu")),
+                "rmsNormEps": float(_cfg_get(cfg, "rms_norm_eps", _cfg_get(cfg, "layer_norm_eps", 1e-6))),
+                "activationFunction": str(_cfg_get(cfg, "hidden_act", "silu")),
                 "tiedEmbeddings": tied,
                 "quantization": self.quantization_kind,
                 **(
@@ -794,7 +951,7 @@ class GraphBuilder:
                         "numExperts": num_experts,
                         "numExpertsPerTok": experts_per_tok,
                         "expertIntermediateSize": expert_intermediate_size,
-                        **({"sharedExpertCount": int(getattr(cfg, "n_shared_experts", 1) or 1)} if self.shared_expert_seen else {}),
+                        **({"sharedExpertCount": int(_cfg_get(cfg, "n_shared_experts", 1) or 1)} if self.shared_expert_seen else {}),
                     }
                     if self.is_moe
                     else {}

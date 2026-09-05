@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Model, Tensor } from "@aperture/model-ir";
-import { unloadModel } from "@aperture/api-client";
+import { unloadModel, getGenerationConfigDefaults } from "@aperture/api-client";
 import { useModel } from "./useModel.js";
 import { useInference } from "./useInference.js";
-import { useGeneration } from "./useGeneration.js";
+import { useGeneration, DEFAULT_GENERATION_PARAMS, type GenerationMode, type GenerationParams } from "./useGeneration.js";
 import { useLocalStorageState } from "./useLocalStorageState.js";
 import { useTheme } from "./components/ThemeSwitcher.js";
 import { useTranslation } from "./components/LanguageContext.js";
-import { SettingsButton, SettingsPanel } from "./components/SettingsPanel.js";
+import { SettingsButton, SettingsPanel, MAX_NEW_TOKENS_FALLBACK_LIMIT } from "./components/SettingsPanel.js";
 import { ModelLoader } from "./components/ModelLoader.js";
 import { LoadModelPanel } from "./components/LoadModelPanel.js";
 import { ModelInfoBar } from "./components/ModelInfoBar.js";
@@ -27,8 +27,8 @@ const BOTTOM_PANEL_DEFAULT_HEIGHT = 360;
 const BOTTOM_PANEL_MIN_HEIGHT = 160;
 /** Leaves at least this much vertical space for the tree/graph/inspector row above, however tall the window is. */
 const BOTTOM_PANEL_TOP_RESERVE = 240;
-/** Shared with the status footer's generation progress fraction — a single source of truth for the cap passed to generation.generate(). */
-const GENERATION_MAX_NEW_TOKENS = 64;
+/** Default for the Settings panel's "Max generation length" — user-adjustable up to the loaded model's real context length (see MAX_NEW_TOKENS_FALLBACK_LIMIT for the pre-load fallback ceiling). */
+const DEFAULT_MAX_NEW_TOKENS = 64;
 
 const TREE_PANEL_DEFAULT_WIDTH = 260;
 // Below this, tree rows (indented 14px per depth) and long node names start
@@ -68,6 +68,7 @@ export function App() {
   const [unloadOnHome, setUnloadOnHome] = useLocalStorageState("settings:unloadOnHome", false);
   const [modelsPerPage, setModelsPerPage] = useLocalStorageState("settings:modelsPerPage", 5);
   const [showGpuStatus, setShowGpuStatus] = useLocalStorageState("settings:showGpuStatus", true);
+  const [maxNewTokens, setMaxNewTokens] = useLocalStorageState("settings:maxNewTokens", DEFAULT_MAX_NEW_TOKENS);
   const [homeBusy, setHomeBusy] = useState(false);
   // Lifted out of InferencePanel's own state so Apply-a-prediction (below)
   // can rewrite the input text to match whatever token sequence was
@@ -113,6 +114,76 @@ export function App() {
   const promptB = useInference(state.model, state.weightProvider, state.adapter, state.tokenizer);
   const generation = useGeneration(state.weightProvider, state.tokenizer);
 
+  // The true ceiling for Settings' "Max generation length" — a model's own
+  // trained context length (config.json's max_position_embeddings), not
+  // one flat number for every checkpoint; a short-context model can't
+  // safely generate as far as a long-context one. Falls back to a generic
+  // cap before any model is loaded (Settings is reachable from the loader
+  // screen too). Re-clamped here (not just at the input) in case a stored
+  // preference from a previous, longer-context model now exceeds this one.
+  const maxNewTokensLimit = state.model?.config.contextLength ?? MAX_NEW_TOKENS_FALLBACK_LIMIT;
+  const effectiveMaxNewTokens = Math.min(maxNewTokens, maxNewTokensLimit);
+
+  // Whether the loaded model's tokenizer defines a chat_template at all
+  // (most base/completion checkpoints don't) — decides whether Generate's
+  // chat/raw toggle is actually offered, and which one it defaults to.
+  const [chatTemplateAvailable, setChatTemplateAvailable] = useState(false);
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("raw");
+  // Settings' "Generation" sliders (temperature/topP/topK/repetitionPenalty/
+  // noRepeatNgramSize) — modelGenerationDefaults is what "Reset to model
+  // defaults" restores, generationParams is the live, user-editable value
+  // actually sent to /api/generate. Deliberately plain useState, not
+  // useLocalStorageState like maxNewTokens: these are reseeded from the
+  // *model's own* generation_config.json on every load (see
+  // GenerationParams' doc comment), so persisting a stale override across a
+  // switch to a different model would fight that model's own tuning rather
+  // than respect it.
+  const [modelGenerationDefaults, setModelGenerationDefaults] = useState<GenerationParams>(DEFAULT_GENERATION_PARAMS);
+  const [generationParams, setGenerationParams] = useState<GenerationParams>(DEFAULT_GENERATION_PARAMS);
+  useEffect(() => {
+    const modelId = state.weightProvider?.id;
+    if (!modelId) {
+      setChatTemplateAvailable(false);
+      setModelGenerationDefaults(DEFAULT_GENERATION_PARAMS);
+      setGenerationParams(DEFAULT_GENERATION_PARAMS);
+      return;
+    }
+    let cancelled = false;
+    getGenerationConfigDefaults(modelId)
+      .then((info) => {
+        if (cancelled) return;
+        setChatTemplateAvailable(info.hasChatTemplate);
+        // Chat is the better default whenever it's actually available —
+        // an instruct-tuned model's own trained format, not a completion
+        // prompt it was never tuned to continue from. Re-derived per model
+        // load rather than remembered across model switches, since a
+        // different model may not have a template at all.
+        setGenerationMode(info.hasChatTemplate ? "chat" : "raw");
+        const defaults: GenerationParams = {
+          temperature: info.temperature,
+          topP: info.topP,
+          topK: info.topK,
+          repetitionPenalty: info.repetitionPenalty,
+          noRepeatNgramSize: info.noRepeatNgramSize,
+        };
+        setModelGenerationDefaults(defaults);
+        setGenerationParams(defaults);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChatTemplateAvailable(false);
+        setModelGenerationDefaults(DEFAULT_GENERATION_PARAMS);
+        setGenerationParams(DEFAULT_GENERATION_PARAMS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.weightProvider]);
+
+  const updateGenerationParam = <K extends keyof GenerationParams>(key: K, value: GenerationParams[K]) => {
+    setGenerationParams((prev) => ({ ...prev, [key]: value }));
+  };
+
   // A different model can have completely different node ids (fewer/more
   // blocks, different architecture) — stale selection/view referencing the
   // old model's ids would otherwise crash ArchitectureGraph's breadcrumb.
@@ -154,6 +225,12 @@ export function App() {
             onModelsPerPageChange={setModelsPerPage}
             showGpuStatus={showGpuStatus}
             onShowGpuStatusChange={setShowGpuStatus}
+            maxNewTokens={maxNewTokens}
+            onMaxNewTokensChange={setMaxNewTokens}
+            maxNewTokensLimit={maxNewTokensLimit}
+            generationParams={generationParams}
+            onGenerationParamChange={updateGenerationParam}
+            onResetGenerationDefaults={() => setGenerationParams(modelGenerationDefaults)}
           />
         </div>
         <ModelLoader
@@ -207,7 +284,7 @@ export function App() {
 
   const runGeneration = (prompt: string) => {
     setPredictionCollapsed(false);
-    generation.generate(prompt, { maxNewTokens: GENERATION_MAX_NEW_TOKENS, temperature: 0.7 });
+    generation.generate(prompt, { maxNewTokens: effectiveMaxNewTokens, ...generationParams }, generationMode);
   };
 
   // Drops into the same inspection UI (Prediction panel, tree, graph, every
@@ -415,7 +492,7 @@ export function App() {
   // Only generation has a meaningful fraction to show (a fixed token cap
   // streamed one at a time) — a plain forward pass is one atomic backend
   // call with no partial progress to report.
-  const footerProgress = generating ? { completed: generation.state.tokens.length, total: GENERATION_MAX_NEW_TOKENS } : undefined;
+  const footerProgress = generating ? { completed: generation.state.tokens.length, total: effectiveMaxNewTokens } : undefined;
   const footerRunningLabel = generating
     ? t("footer.generating")
     : runningA && runningB
@@ -483,6 +560,12 @@ export function App() {
             onModelsPerPageChange={setModelsPerPage}
             showGpuStatus={showGpuStatus}
             onShowGpuStatusChange={setShowGpuStatus}
+            maxNewTokens={maxNewTokens}
+            onMaxNewTokensChange={setMaxNewTokens}
+            maxNewTokensLimit={maxNewTokensLimit}
+            generationParams={generationParams}
+            onGenerationParamChange={updateGenerationParam}
+            onResetGenerationDefaults={() => setGenerationParams(modelGenerationDefaults)}
           />
         </div>
       </div>
@@ -520,6 +603,10 @@ export function App() {
               onGenerate={runGeneration}
               onStopGeneration={generation.stop}
               onInspectStep={inspectGenerationStep}
+              generationMode={generationMode}
+              onToggleGenerationMode={() => setGenerationMode((m) => (m === "chat" ? "raw" : "chat"))}
+              chatTemplateAvailable={chatTemplateAvailable}
+              maxNewTokens={effectiveMaxNewTokens}
             />
             {showPredictionA && state.tokenizer && (
               <div className="prediction-panels-row">

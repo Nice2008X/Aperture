@@ -67,6 +67,15 @@ const IDLE_DOWNLOAD: DownloadState = { status: "idle" };
 // that will land on the GPU.
 const QUANT_MEMORY_FACTOR: Record<"4bit" | "8bit", number> = { "8bit": 0.5, "4bit": 0.25 };
 
+// A checkpoint this large is realistically always going to be a squeeze at
+// full BF16 — even when it technically fits in whatever's free right now,
+// activations/KV-cache on top of ~40GB+ of weights leave little headroom,
+// and "just barely fits" today can OOM tomorrow once something else shares
+// the GPU. Defaulting straight to 4-bit for anything over this size is a
+// simpler, more predictable rule than only reacting to the *current*
+// free-VRAM snapshot (still fully overridable via the dropdown below).
+const LARGE_MODEL_QUANTIZATION_THRESHOLD_BYTES = 20e9;
+
 function estimatedBytesFor(sizeBytes: number, quantization: Quantization): number {
   return sizeBytes * (quantization ? QUANT_MEMORY_FACTOR[quantization] : 1);
 }
@@ -340,7 +349,30 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
   // an explicit Load model button inside (see the expanded-loaded branch
   // below) lets the user decide.
   function selectEntry(entry: CatalogEntry) {
-    setSelectedId((cur) => (cur === entry.id ? null : entry.id));
+    const opening = selectedId !== entry.id;
+    // BF16 (this precision selector's default) can be genuinely too big to
+    // load at all, or too tight for real comfort, for a large model — in
+    // which case leaving the default at full precision just walks the user
+    // into an OOM. Auto-drop to a lower precision instead, the first time
+    // such a card is opened — still fully overridable via the dropdown
+    // below, and never forced back to full for a model that's fine, so it
+    // doesn't fight a precision the user picked deliberately for an earlier
+    // card. Two independent triggers: a flat size threshold (simple and
+    // predictable — the same checkpoint should default the same way
+    // regardless of what else happens to be resident on the GPU right now)
+    // and, for anything under that, the actual current free-VRAM fit.
+    // Never for an already pre-quantized checkpoint (nativeQuantization
+    // set) — bitsandbytes can't be layered on top of its own baked-in
+    // scheme (FP8, GPTQ, ...); the precision picker is disabled for it
+    // below instead of offered and then rejected at load time.
+    if (opening && !entry.loaded && !entry.nativeQuantization) {
+      if (entry.sizeBytes > LARGE_MODEL_QUANTIZATION_THRESHOLD_BYTES) {
+        setQuantization("4bit");
+      } else if (gpuInfo && fitLevel(estimatedBytesFor(entry.sizeBytes, undefined), gpuInfo.freeBytes) === "no") {
+        setQuantization(fitLevel(estimatedBytesFor(entry.sizeBytes, "8bit"), gpuInfo.freeBytes) !== "no" ? "8bit" : "4bit");
+      }
+    }
+    setSelectedId(opening ? entry.id : null);
   }
 
   // Checked against the *unfiltered* catalog, not `entries` — the embedded
@@ -576,11 +608,20 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
           // precision currently chosen (shared across cards — it's "the
           // precision you'd load at"), falling back to the default
           // (full/bf16) before anything's been configured yet or when
-          // there's no GPU info to check against.
-          const entryEstimatedBytes = estimatedBytesFor(entry.sizeBytes, quantization);
+          // there's no GPU info to check against. Forced to "none" for an
+          // already pre-quantized entry regardless of the shared picker —
+          // bitsandbytes can't apply on top of its own baked-in scheme, so
+          // its real footprint is always the on-disk size, and the picker
+          // itself is disabled for it below.
+          const entryQuantization = entry.nativeQuantization ? undefined : quantization;
+          const entryEstimatedBytes = estimatedBytesFor(entry.sizeBytes, entryQuantization);
           const cardFit = gpuInfo ? fitLevel(entryEstimatedBytes, gpuInfo.freeBytes) : null;
           const fitLabelKey = cardFit === "fits" ? "loader.fitsShort" : cardFit === "tight" ? "loader.tightShort" : "loader.noFitShort";
-          const precisionLabel = quantization ? t(quantization === "8bit" ? "loader.precision8bit" : "loader.precision4bit") : t("loader.precisionFull");
+          const precisionLabel = entryQuantization
+            ? t(entryQuantization === "8bit" ? "loader.precision8bit" : "loader.precision4bit")
+            : entry.nativeQuantization
+              ? t("loader.precisionNative").replace("{method}", entry.nativeQuantization.toUpperCase())
+              : t("loader.precisionFull");
 
           // Collapsed (the common case — everything but the selected card):
           // one line, just enough to answer "what is it, will it fit" — a
@@ -684,8 +725,9 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
                     <div className="model-loader-config-row">
                       <span className="model-loader-config-label">{t("loader.precision")}</span>
                       <select
-                        value={quantization ?? "none"}
-                        disabled={modelLoading}
+                        value={entry.nativeQuantization ? "none" : (quantization ?? "none")}
+                        disabled={modelLoading || !!entry.nativeQuantization}
+                        title={entry.nativeQuantization ? t("loader.nativeQuantizationNote").replace("{method}", entry.nativeQuantization.toUpperCase()) : undefined}
                         onChange={(e) => setQuantization(e.target.value === "none" ? undefined : (e.target.value as "4bit" | "8bit"))}
                       >
                         <option value="none">{t("loader.precisionFull")}</option>
@@ -693,6 +735,11 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
                         <option value="4bit">{t("loader.precision4bit")}</option>
                       </select>
                     </div>
+                    {entry.nativeQuantization && (
+                      <div className="model-loader-native-quant-note">
+                        {t("loader.nativeQuantizationNote").replace("{method}", entry.nativeQuantization.toUpperCase())}
+                      </div>
+                    )}
                     {cardFit && (
                       <div className={`model-loader-fit-note ${cardFit}`}>
                         <div className="model-loader-fit-headline">
@@ -707,7 +754,7 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
                         </div>
                       </div>
                     )}
-                    <button className="model-loader-load-btn" disabled={modelLoading} onClick={() => onLoad(entry.id, quantization)}>
+                    <button className="model-loader-load-btn" disabled={modelLoading} onClick={() => onLoad(entry.id, entryQuantization)}>
                       {t("loader.loadModel")}
                     </button>
                   </>

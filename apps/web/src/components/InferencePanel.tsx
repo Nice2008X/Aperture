@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from "react";
 import type { InferenceState } from "../useInference.js";
-import type { GenerationState } from "../useGeneration.js";
+import type { GenerationState, GenerationMode } from "../useGeneration.js";
 import { useTranslation } from "./LanguageContext.js";
 
 interface Props {
@@ -26,6 +27,13 @@ interface Props {
   onStopGeneration: () => void;
   /** Clicking a generated token re-runs inspection (the same `state` this panel already renders token chips for) on the prefix ending at that token, so the rest of the app can drop into any generated step. */
   onInspectStep: (tokenIndex: number) => void;
+  /** "chat" wraps Prompt A in the loaded model's own chat template before generating (apps/api's apply_chat_template) — what an instruct-tuned model actually expects; "raw" sends it exactly as typed, this panel's original behavior. */
+  generationMode: GenerationMode;
+  onToggleGenerationMode: () => void;
+  /** False for a model with no chat_template at all (most base/completion checkpoints) — the toggle is disabled in that case, since "chat" isn't actually an option. */
+  chatTemplateAvailable: boolean;
+  /** The actual cap Generate will use this click (Settings' "Max generation length", already clamped to the loaded model's context length) — surfaced here so the length limit isn't a surprise, with a pointer to where it's changed. */
+  maxNewTokens: number;
 }
 
 export function InferencePanel({
@@ -48,8 +56,25 @@ export function InferencePanel({
   onGenerate,
   onStopGeneration,
   onInspectStep,
+  generationMode,
+  onToggleGenerationMode,
+  chatTemplateAvailable,
+  maxNewTokens,
 }: Props) {
   const { t } = useTranslation();
+  // Local, not lifted to App — nothing outside this panel needs to know
+  // whether the streamed output is expanded, unlike promptSectionCollapsed
+  // et al. which gate layout other components react to.
+  const [outputCollapsed, setOutputCollapsed] = useState(false);
+  // Keeps the scrollable output pinned to the latest token as it streams
+  // in — without this, a generation longer than the box's max-height would
+  // silently keep growing below the fold while the box stays scrolled to
+  // wherever it was (the top, the first time).
+  const tokensRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = tokensRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [generationState.tokens.length]);
 
   if (!supported) {
     return (
@@ -77,6 +102,17 @@ export function InferencePanel({
         </button>
         <button type="button" className="compare-toggle" onClick={onToggleCompare}>
           {compareEnabled ? t("inference.hidePromptB") : t("inference.comparePromptB")}
+        </button>
+        <button
+          type="button"
+          className={"chat-template-toggle" + (generationMode === "chat" ? " active" : "")}
+          disabled={!chatTemplateAvailable || generating}
+          onClick={onToggleGenerationMode}
+          aria-pressed={generationMode === "chat"}
+          aria-label={generationMode === "chat" ? t("generation.switchToRaw") : t("generation.switchToChat")}
+          title={chatTemplateAvailable ? (generationMode === "chat" ? t("generation.switchToRaw") : t("generation.switchToChat")) : t("generation.noChatTemplate")}
+        >
+          💬
         </button>
         {generating ? (
           <button type="button" className="generate-btn generate-stop" onClick={onStopGeneration}>
@@ -112,20 +148,35 @@ export function InferencePanel({
 
       {generationState.status !== "idle" && (
         <div className="generation-output">
-          {generationState.error && <div className="inference-error">{generationState.error}</div>}
-          <div className="generation-tokens">
-            {generationState.tokens.map((tok, i) => (
-              <button
-                key={i}
-                className="generation-token"
-                title={t("generation.inspectStep")}
-                onClick={() => onInspectStep(i)}
-              >
-                {tok.text}
-              </button>
-            ))}
-            {generating && <span className="spinner spinner-inline" />}
+          <div className="generation-output-header">
+            <button
+              type="button"
+              className="generation-output-toggle"
+              onClick={() => setOutputCollapsed((v) => !v)}
+              aria-expanded={!outputCollapsed}
+              title={outputCollapsed ? t("app.expandPanel") : t("app.collapsePanel")}
+            >
+              <span className="generation-output-toggle-icon">{outputCollapsed ? "▸" : "▾"}</span>
+              {t("generation.outputTitle")}
+            </button>
+            <span className="generation-length-hint">{t("generation.maxLengthNote").replace("{limit}", maxNewTokens.toLocaleString())}</span>
           </div>
+          {generationState.error && <div className="inference-error">{generationState.error}</div>}
+          {!outputCollapsed && (
+            <div className="generation-tokens" ref={tokensRef}>
+              {generationState.tokens.map((tok, i) => (
+                <button
+                  key={i}
+                  className="generation-token"
+                  title={t("generation.inspectStep")}
+                  onClick={() => onInspectStep(i)}
+                >
+                  {tok.text}
+                </button>
+              ))}
+              {generating && <span className="spinner spinner-inline" />}
+            </div>
+          )}
         </div>
       )}
 

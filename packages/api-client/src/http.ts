@@ -40,6 +40,8 @@ export interface CatalogEntry {
   loaded: boolean;
   /** The quantization the resident model is actually loaded with — null on every non-resident entry. Lets a refresh-resume re-request the exact same load and hit the backend's already-resident fast path instead of mismatching and triggering a real reload. */
   loadedQuantization: "4bit" | "8bit" | null;
+  /** Non-null when this checkpoint already ships pre-quantized (its own config.json carries a quantization_config — FP8, GPTQ, ...), naming the scheme (e.g. "fp8"). Our own 4-bit/8-bit bitsandbytes options can't be layered on top of that — transformers refuses the load outright if asked to — so the precision picker should disable them for an entry like this rather than let the user hit that error. */
+  nativeQuantization: string | null;
 }
 
 export async function listModels(): Promise<CatalogEntry[]> {
@@ -55,6 +57,47 @@ export type GpuStatus =
 export async function getGpuStatus(): Promise<GpuStatus> {
   const res = await apiFetch("/api/gpu");
   return res.json();
+}
+
+/** A loaded model's own recommended sampling parameters — apps/api's generation.py generation_defaults() sources each field from this checkpoint's own generation_config.json wherever its authors specified one (Qwen ships repetitionPenalty: 1.1, temperature: 0.7, topP: 0.8, topK: 20), falling back to this app's own defaults for whatever a checkpoint leaves unset (a base/completion checkpoint's auto-derived generation_config.json typically specifies none of them at all). noRepeatNgramSize is always this app's own default (3) — essentially no model author's config ever sets it. */
+export interface GenerationConfigDefaults {
+  /** Whether this model's tokenizer_config.json defines a chat_template at all — false for most base/completion checkpoints, true for the overwhelming majority of instruct-tuned ones. */
+  hasChatTemplate: boolean;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repetitionPenalty: number;
+  noRepeatNgramSize: number;
+}
+
+/** Fetches the just-loaded model's own generation defaults in one round trip — call once after a model finishes loading to seed both the chat-template toggle and Settings' generation sliders (and to reset them back to these values later, via the same values). */
+export async function getGenerationConfigDefaults(modelId: string): Promise<GenerationConfigDefaults> {
+  const res = await apiFetch(`/api/models/${encodeURIComponent(modelId)}/generation-config`);
+  return res.json();
+}
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/**
+ * Wraps `messages` in this model's own trained chat format and tokenizes
+ * the result — via transformers' real Jinja implementation server-side
+ * (apps/api's generation.py apply_chat_template), not a hand-rolled
+ * approximation in this browser tokenizer package. Returns plain token ids,
+ * usable anywhere a raw tokenizer.encode() result is (streamGeneration,
+ * runInference, ...). Throws if this model has no chat_template — check
+ * getGenerationConfigDefaults first.
+ */
+export async function applyChatTemplate(modelId: string, messages: ChatMessage[]): Promise<number[]> {
+  const res = await apiFetch(`/api/models/${encodeURIComponent(modelId)}/chat-template`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  const data = (await res.json()) as { tokenIds: number[] };
+  return data.tokenIds;
 }
 
 export type LoadDtype = "bf16" | "fp16" | "fp32";
@@ -274,6 +317,10 @@ export interface GenerationOptions {
   temperature?: number;
   topP?: number;
   topK?: number;
+  /** >1.0 discourages the model from repeating a token it already generated this step; 1.0 is a no-op. See apps/api's generation.py _apply_repetition_penalty. */
+  repetitionPenalty?: number;
+  /** Hard-bans repeating any run of this many tokens verbatim; 0 disables it. The actual fix for a long generation looping the same sentence — see apps/api's generation.py _ban_repeated_ngrams. */
+  noRepeatNgramSize?: number;
 }
 
 export interface GenerationToken {
