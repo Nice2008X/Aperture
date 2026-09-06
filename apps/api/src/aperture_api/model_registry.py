@@ -301,6 +301,8 @@ class ModelRegistry:
                     set_tqdm_hook(previous_hook)
 
             task = asyncio.create_task(asyncio.to_thread(run))
+            cancelled = False
+            error_msg: str | None = None
             try:
                 while True:
                     try:
@@ -311,21 +313,34 @@ class ModelRegistry:
                         await asyncio.sleep(0.1)
                 model = await task
             except LoadCancelled:
+                cancelled = True
+            except Exception as e:  # noqa: BLE001 — a bad checkpoint, OOM, etc. all become one clear event
+                error_msg = str(e)
+
+            if cancelled or error_msg is not None:
                 self._loading_model_id = None
                 self._cancel_load_requested = False
-                # Whatever layers from_pretrained had already materialized
-                # onto the GPU before the interrupt are now unreferenced
-                # (the crashed run() thread's local `m` never escaped it) —
-                # same cleanup _unload_locked() does, to reclaim that
-                # memory promptly instead of waiting on GC's own schedule.
+                # Deliberately outside the except block above (not
+                # `except LoadCancelled: ... yield ...`): a bare `except
+                # Foo:` keeps Foo (and its full __traceback__ — every stack
+                # frame it unwound through, from_pretrained's own locals
+                # included) as the interpreter's "currently handled
+                # exception" for as long as that suite is still executing,
+                # and a generator's `yield` *suspends* execution rather
+                # than leaving the block — so yielding from inside the
+                # handler kept that whole reference chain (GBs of
+                # partially-materialized tensors on a large checkpoint)
+                # alive for as long as the SSE consumer took to pull the
+                # next value, not just until this line ran. Falling all the
+                # way through to a plain `if` here first lets the except
+                # suite actually finish and clear that state before any of
+                # this runs. `del task` on top: an asyncio.Task also keeps
+                # the exception/traceback it raised alive independently,
+                # for as long as the Task object itself is referenced.
+                del task
                 gc.collect()
                 torch.cuda.empty_cache()
-                yield {"cancelled": True}
-                return
-            except Exception as e:  # noqa: BLE001 — a bad checkpoint, OOM, etc. all become one clear event
-                self._loading_model_id = None
-                self._cancel_load_requested = False
-                yield {"error": str(e)}
+                yield {"cancelled": True} if cancelled else {"error": error_msg}
                 return
 
             yield {"phase": "building_graph"}

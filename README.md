@@ -10,6 +10,11 @@ interventions (ablate a head, patch in an activation from another prompt)
 to see what actually drives the model's output — dense **and**
 Mixture-of-Experts architectures alike.
 
+> **Curious about a browser-only, no-GPU version?** Check out this
+> project's sister, [Tensorium](https://nice2008x.github.io/Tensorium/)
+> ([source](https://github.com/Nice2008X/Tensorium)) — though this
+> GPU-backed version is more fun to actually play with.
+
 Unlike a purely client-side demo, there's no size ceiling baked into the
 design: the backend loads real multi-GB checkpoints (optionally 4-bit/
 8-bit quantized via `bitsandbytes`) onto an actual CUDA GPU. The frontend
@@ -17,11 +22,6 @@ never receives model weights in bulk — it fetches windowed slices of
 whatever tensor you're currently looking at.
 
 ![Screenshot of Aperture: the model tree, a transformer block's Attention internals with a scope box grouping its Q/K/V/Output projections, the Inspector panel showing an Input Construction breakdown, and the Tensor Explorer's activation heatmap](docs/screenshot.png)
-
-> **Curious about a browser-only, no-GPU version?** Check out this
-> project's sister, [Tensorium](https://nice2008x.github.io/Tensorium/)
-> ([source](https://github.com/Nice2008X/Tensorium)) — though this
-> GPU-backed version is more fun to actually play with.
 
 ## Features
 
@@ -90,23 +90,23 @@ React frontend is a thin client that renders whatever the backend hands
 it over REST + SSE.
 
 ```
-┌─────────────────────────┐        REST + SSE          ┌──────────────────────────────┐
-│  apps/web (React)       │  ─────────────────────▶    │  apps/api (FastAPI, Python)  │
-│  architecture graph,     │                            │  - model registry/loader      │
-│  tree, inspector,        │  ◀─────────────────────    │  - generic IR builder          │
-│  tensor explorer,        │   JSON (graph/meta) +      │  - forward-pass runner         │
-│  experiment panel, ...   │   binary tensor payloads   │  - hook-based capture +        │
-└─────────────────────────┘                             │    intervention support        │
-                                                          │  - streaming generation        │
-                                                          │  - HF download manager         │
-                                                          └───────────────┬───────────────┘
-                                                                          │ torch + transformers
-                                                                          ▼
-                                                          ┌──────────────────────────────┐
-                                                          │  GPU (CUDA)                    │
-                                                          └──────────────────────────────┘
-                                                                          │
-                                                                          ▼
+┌─────────────────────────┐        REST + SSE          ┌───────────────────────────────┐
+│  apps/web (React)       │  ─────────────────────▶    │  apps/api (FastAPI, Python)   │
+│  architecture graph,    │                            │  - model registry/loader      │
+│  tree, inspector,       │  ◀─────────────────────    │  - generic IR builder         │
+│  tensor explorer,       │   JSON (graph/meta) +      │  - forward-pass runner        │
+│  experiment panel, ...  │   binary tensor payloads   │  - hook-based capture +       │
+└─────────────────────────┘                            │    intervention support       │
+                                                       │  - streaming generation       │
+                                                       │  - HF download manager        │
+                                                       └───────────────┬───────────────┘
+                                                                       │ torch + transformers
+                                                                       ▼
+                                                       ┌──────────────────────────────┐
+                                                       │  GPU (CUDA)                  │
+                                                       └──────────────────────────────┘
+                                                                       │
+                                                                       ▼
                                                           data/models/<model-id>/
                                                             manifest.json, config.json,
                                                             tokenizer.*, *.safetensors
