@@ -7,13 +7,29 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
   "torch>=2.5",
-  "transformers>=4.46",
+  # >=5.16.1 specifically: 5.15.0 has a real bug in its gpt-oss/MXFP4
+  # weight-conversion path — every MoE expert's gate_up_proj/down_proj
+  # silently comes back "MISSING" (randomly initialized instead of loaded
+  # from the checkpoint) regardless of attn_implementation or whether the
+  # `kernels` package is installed, producing near-random predictions with
+  # no error or warning. Confirmed fixed in 5.16.1 (verified against a
+  # real gpt-oss-20b load: correct "The cat sat on the" -> " mat" @ 81%,
+  # vs. 5.15.0's ~15% on a bare space). Isolated to this one point release
+  # via a side-by-side test; not verified against every 5.x version, so
+  # don't drop below 5.16.1 without re-checking this.
+  "transformers>=5.16.1",
   "safetensors>=0.4",
   "huggingface_hub>=0.26",
   "accelerate>=1.1",
   "pydantic>=2.9",
   "sse-starlette>=2.1",
   "bitsandbytes>=0.50",
+  # Needed (alongside torch's own bundled triton) for gpt-oss-style MXFP4
+  # checkpoints to load via their native quantized kernels — without it,
+  # transformers falls back to dequantizing to bf16 on the fly instead,
+  # a comparatively new/less-exercised code path. Version range matches
+  # transformers' own quantizer_mxfp4.py KERNELS_MIN_VERSION/MAX_VERSION.
+  "kernels>=0.16.0,<0.17.0",
 ]
 
 [tool.uv]

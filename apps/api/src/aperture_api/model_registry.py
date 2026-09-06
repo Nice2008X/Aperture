@@ -267,6 +267,23 @@ class ModelRegistry:
             # precision instead of crashing.
             quant_config = None if _native_quantization_method(path) is not None else _quantization_config(quantization, torch_dtype)
 
+            # Only ever included in the from_pretrained() call below when
+            # it's non-None — passing quantization_config=None *explicitly*
+            # is not the same as omitting the argument for a checkpoint
+            # that's already pre-quantized. Confirmed empirically (a
+            # controlled load of a real mxfp4 checkpoint, otherwise
+            # identical): omitted entirely, the checkpoint's own
+            # config.json quantization_config is correctly detected and
+            # applied, giving correct predictions; passed as an explicit
+            # None, the same checkpoint's MoE expert weights silently come
+            # back "MISSING" (randomly initialized instead of loaded) with
+            # no error, producing near-random predictions. Whatever the
+            # exact internal reason, treat "no override" as "don't mention
+            # this kwarg at all", not as "mention it with a None value".
+            from_pretrained_kwargs: dict[str, object] = {}
+            if quant_config is not None:
+                from_pretrained_kwargs["quantization_config"] = quant_config
+
             def run() -> torch.nn.Module:
                 previous_hook = set_tqdm_hook(hook)
                 try:
@@ -275,11 +292,8 @@ class ModelRegistry:
                     # per-head softmax weights instead of None — the whole
                     # point of AttentionView. Slower than sdpa, but this app
                     # is for inspection, not throughput, and prompts are short.
-                    # quantization_config=None (the common case) is a no-op —
-                    # from_pretrained loads at `dtype` exactly as before
-                    # PLAN.md §8.7 added this parameter.
                     m = AutoModelForCausalLM.from_pretrained(
-                        path, dtype=torch_dtype, device_map="cuda", attn_implementation="eager", quantization_config=quant_config
+                        path, dtype=torch_dtype, device_map="cuda", attn_implementation="eager", **from_pretrained_kwargs
                     )
                     m.eval()
                     return m
