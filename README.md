@@ -23,6 +23,62 @@ whatever tensor you're currently looking at.
 
 ![Screenshot of Aperture: the model tree, a transformer block's Attention internals with a scope box grouping its Q/K/V/Output projections, the Inspector panel showing an Input Construction breakdown, and the Tensor Explorer's activation heatmap](docs/screenshot.png)
 
+## Screenshots
+
+**Load any Hugging Face model onto the GPU.** Paste a repo id or pick one
+already downloaded — the catalog checks GPU headroom against each
+quantization option before you commit to a load, and a loaded model
+survives a page reload. The natural first stop when evaluating a new
+checkpoint before writing any code against it.
+
+![Load-a-model screen: GPU memory bar, an "org/model-name" field, and a model library listing four downloaded checkpoints with their size and quantization](docs/screenshots/01-load-model.png)
+
+**Get oriented in an unfamiliar architecture, instantly.** The whole
+model as a graph next to a live next-token prediction over a real
+forward pass. Good for answering "how many layers / what's the
+attention shape here" in seconds, and for catching something wrong
+(garbled tokenizer, a bad checkpoint) before you've written a single
+debug line.
+
+![Architecture graph view with the next-token prediction bar chart above it and the model tree alongside](docs/screenshots/02-architecture-graph.png)
+
+**Drill into one block's wiring, then into a single weight matrix.**
+Double-click a transformer block for its internal graph (norms,
+projections, activation function), click any weight to render it as a
+heatmap with min/max/percentile stats. The fastest way to confirm a
+quantized or converted checkpoint actually loaded real weights —
+corrupted or randomly-initialized tensors are visually obvious in a
+heatmap in a way that's easy to miss in raw numbers.
+
+![Expanded transformer block showing the gated-MLP wiring, the Inspector's "show me the math" breakdown for the selected projection, and its weight matrix rendered as a red/blue heatmap](docs/screenshots/03-tensor-explorer.png)
+
+**See which input tokens actually drove a prediction.**
+Occlusion-based attribution masks each input token in turn and measures
+how much the prediction shifts — per-token and per-attention-head,
+color-coded by whether removing it helped or hurt. Useful for checking
+whether a prompt is doing what you think it's doing, or diagnosing why
+a model latched onto the wrong part of the input.
+
+![Token Attribution view listing each prompt token and attention head ranked by how much removing it shifted the prediction, with blue/red bars for helped/hurt](docs/screenshots/04-token-attribution.png)
+
+**Run a real causal intervention and watch the output shift.** Zero
+out a component (or a single attention head) and re-run the forward
+pass to see the before/after effect on the output distribution — actual
+mechanistic-interpretability tooling, not a static explanation. Handy
+for testing a hypothesis like "is this specific layer responsible for
+this behavior" directly against the real model.
+
+![Experiment panel: a Feed Forward block set to "Zero out (ablate)", with a before/after comparison of the top-5 next-token probabilities and their percentage-point change](docs/screenshots/05-experiment.png)
+
+**Watch a Mixture-of-Experts model route each token.** For MoE
+architectures, see exactly which experts fired per token and their gate
+weight, next to the generic graph view of every expert feeding into the
+combine step. This works for any MoE architecture `transformers`
+supports with zero per-model code — handy for comparing routing
+behavior across different MoE checkpoints.
+
+![Mixture-of-Experts layer graph with 8 expert nodes feeding into a Combine Experts node, and a per-token bar below showing each token's top-2 selected experts and gate weights](docs/screenshots/06-moe-routing.png)
+
 ## Features
 
 - **Load a Hugging Face model** by repo id — any architecture registered

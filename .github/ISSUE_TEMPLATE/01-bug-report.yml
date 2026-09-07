@@ -1,0 +1,138 @@
+name: 🐛 Bug Report
+description: File a structured report to help us solve a bug.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Aperture is a
+        client/server app — a Python/GPU backend loads and runs the model,
+        and the browser is a thin client — so most bugs are specific to a
+        model/quantization/backend combination. The more detail below
+        (especially a backend traceback, if the bug happened while
+        loading or running a model), the faster this gets fixed.
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate.
+          required: true
+        - label: I have checked the README's [Known limitations](https://github.com/Nice2008X/Aperture#known-limitations) section — this isn't already a documented limitation.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the bug, including which model/repo id and quantization you loaded.
+      placeholder: |
+        1. Load repo id '...' (4-bit / 8-bit / no quantization)
+        2. Click on '...'
+        3. Run a forward pass with prompt '...'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: model-repo
+    attributes:
+      label: Model / repo id
+      description: Which Hugging Face repo was loaded when this happened, if applicable.
+      placeholder: e.g. deepseek-ai/DeepSeek-V2-Lite
+    validations:
+      required: false
+  - type: dropdown
+    id: quantization
+    attributes:
+      label: Quantization
+      description: How the model was loaded onto the GPU.
+      options:
+        - None (bf16/fp16/fp32)
+        - 4-bit (bitsandbytes)
+        - 8-bit (bitsandbytes)
+        - Native pre-quantized (e.g. MXFP4)
+        - Not sure / not applicable
+    validations:
+      required: false
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome
+        - Firefox
+        - Safari
+        - Edge
+        - Other (specify in Additional context)
+    validations:
+      required: true
+  - type: input
+    id: browser-version
+    attributes:
+      label: Browser version
+      placeholder: e.g. 128.0.6613.120
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: The GPU the backend was running on, if known (and its VRAM, if the bug is load/memory-related).
+      placeholder: e.g. NVIDIA RTX 4090, 24 GB
+    validations:
+      required: false
+  - type: textarea
+    id: backend-error
+    attributes:
+      label: Backend traceback
+      description: Any error/traceback printed in the terminal running `uvicorn` — this is usually the single most useful thing you can include for a load, forward-pass, or generation bug.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: console-errors
+    attributes:
+      label: Browser console errors
+      description: Any errors from the browser's DevTools console (press F12) — most useful for a graph/UI rendering bug.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag and drop images here if they help explain the problem.
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Anything else worth knowing — a link to a specific model repo, network conditions, browser extensions, etc.
+    validations:
+      required: false
