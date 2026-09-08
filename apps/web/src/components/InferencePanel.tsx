@@ -103,6 +103,15 @@ export function InferencePanel({
         <button type="button" className="compare-toggle" onClick={onToggleCompare}>
           {compareEnabled ? t("inference.hidePromptB") : t("inference.comparePromptB")}
         </button>
+        {generating ? (
+          <button type="button" className="generate-btn generate-stop" onClick={onStopGeneration}>
+            <span className="spinner spinner-inline" /> {t("generation.stop")}
+          </button>
+        ) : (
+          <button type="button" className="generate-btn" onClick={() => onGenerate(prompt)}>
+            {t("generation.generate")}
+          </button>
+        )}
         <button
           type="button"
           className={"chat-template-toggle" + (generationMode === "chat" ? " active" : "")}
@@ -114,15 +123,6 @@ export function InferencePanel({
         >
           💬
         </button>
-        {generating ? (
-          <button type="button" className="generate-btn generate-stop" onClick={onStopGeneration}>
-            <span className="spinner spinner-inline" /> {t("generation.stop")}
-          </button>
-        ) : (
-          <button type="button" className="generate-btn" onClick={() => onGenerate(prompt)}>
-            {t("generation.generate")}
-          </button>
-        )}
       </form>
 
       {state.status === "error" && <div className="inference-error">{state.error}</div>}

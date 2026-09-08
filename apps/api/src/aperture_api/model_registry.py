@@ -267,6 +267,23 @@ class ModelRegistry:
             # precision instead of crashing.
             quant_config = None if _native_quantization_method(path) is not None else _quantization_config(quantization, torch_dtype)
 
+            # Only ever included in the from_pretrained() call below when
+            # it's non-None — passing quantization_config=None *explicitly*
+            # is not the same as omitting the argument for a checkpoint
+            # that's already pre-quantized. Confirmed empirically (a
+            # controlled load of a real mxfp4 checkpoint, otherwise
+            # identical): omitted entirely, the checkpoint's own
+            # config.json quantization_config is correctly detected and
+            # applied, giving correct predictions; passed as an explicit
+            # None, the same checkpoint's MoE expert weights silently come
+            # back "MISSING" (randomly initialized instead of loaded) with
+            # no error, producing near-random predictions. Whatever the
+            # exact internal reason, treat "no override" as "don't mention
+            # this kwarg at all", not as "mention it with a None value".
+            from_pretrained_kwargs: dict[str, object] = {}
+            if quant_config is not None:
+                from_pretrained_kwargs["quantization_config"] = quant_config
+
             def run() -> torch.nn.Module:
                 previous_hook = set_tqdm_hook(hook)
                 try:
@@ -275,11 +292,8 @@ class ModelRegistry:
                     # per-head softmax weights instead of None — the whole
                     # point of AttentionView. Slower than sdpa, but this app
                     # is for inspection, not throughput, and prompts are short.
-                    # quantization_config=None (the common case) is a no-op —
-                    # from_pretrained loads at `dtype` exactly as before
-                    # PLAN.md §8.7 added this parameter.
                     m = AutoModelForCausalLM.from_pretrained(
-                        path, dtype=torch_dtype, device_map="cuda", attn_implementation="eager", quantization_config=quant_config
+                        path, dtype=torch_dtype, device_map="cuda", attn_implementation="eager", **from_pretrained_kwargs
                     )
                     m.eval()
                     return m
@@ -287,6 +301,8 @@ class ModelRegistry:
                     set_tqdm_hook(previous_hook)
 
             task = asyncio.create_task(asyncio.to_thread(run))
+            cancelled = False
+            error_msg: str | None = None
             try:
                 while True:
                     try:
@@ -297,21 +313,34 @@ class ModelRegistry:
                         await asyncio.sleep(0.1)
                 model = await task
             except LoadCancelled:
+                cancelled = True
+            except Exception as e:  # noqa: BLE001 — a bad checkpoint, OOM, etc. all become one clear event
+                error_msg = str(e)
+
+            if cancelled or error_msg is not None:
                 self._loading_model_id = None
                 self._cancel_load_requested = False
-                # Whatever layers from_pretrained had already materialized
-                # onto the GPU before the interrupt are now unreferenced
-                # (the crashed run() thread's local `m` never escaped it) —
-                # same cleanup _unload_locked() does, to reclaim that
-                # memory promptly instead of waiting on GC's own schedule.
+                # Deliberately outside the except block above (not
+                # `except LoadCancelled: ... yield ...`): a bare `except
+                # Foo:` keeps Foo (and its full __traceback__ — every stack
+                # frame it unwound through, from_pretrained's own locals
+                # included) as the interpreter's "currently handled
+                # exception" for as long as that suite is still executing,
+                # and a generator's `yield` *suspends* execution rather
+                # than leaving the block — so yielding from inside the
+                # handler kept that whole reference chain (GBs of
+                # partially-materialized tensors on a large checkpoint)
+                # alive for as long as the SSE consumer took to pull the
+                # next value, not just until this line ran. Falling all the
+                # way through to a plain `if` here first lets the except
+                # suite actually finish and clear that state before any of
+                # this runs. `del task` on top: an asyncio.Task also keeps
+                # the exception/traceback it raised alive independently,
+                # for as long as the Task object itself is referenced.
+                del task
                 gc.collect()
                 torch.cuda.empty_cache()
-                yield {"cancelled": True}
-                return
-            except Exception as e:  # noqa: BLE001 — a bad checkpoint, OOM, etc. all become one clear event
-                self._loading_model_id = None
-                self._cancel_load_requested = False
-                yield {"error": str(e)}
+                yield {"cancelled": True} if cancelled else {"error": error_msg}
                 return
 
             yield {"phase": "building_graph"}

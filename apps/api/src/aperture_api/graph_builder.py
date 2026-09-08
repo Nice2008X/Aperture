@@ -90,7 +90,18 @@ _DTYPE_MAP = {
 
 
 def dtype_to_str(dtype: torch.dtype) -> str:
-    return _DTYPE_MAP.get(dtype, "F32")
+    """Best-effort label for a weight's real precision, shown in the
+    Tensor Explorer. A natively-quantized MoE weight kept in its packed,
+    kernel-specific representation (e.g. gpt-oss's mxfp4 triton kernels
+    expose a custom `FloatType` instead of a plain torch.dtype) isn't
+    even hashable, so the dict lookup itself raises rather than just
+    missing — caught here and given a generic label instead of a
+    misleading "F32" default that would imply a precision it isn't.
+    """
+    try:
+        return _DTYPE_MAP.get(dtype, "F32")
+    except TypeError:
+        return "QUANT"
 
 
 def _is_norm(cls_name: str) -> tuple[bool, NodeType]:
@@ -809,7 +820,17 @@ class GraphBuilder:
                     moe_experts_entry = (name, mod)
                 elif "MLP" in cname or "FeedForward" in cname or "MoE" in cname or "Moe" in cname:
                     ffn_entry = (name, mod)
-                    ffn_is_moe = "MoE" in cname or "Moe" in cname
+                    # Some architectures route internally without the
+                    # container's own class name signaling it at all —
+                    # gpt-oss's whole MoE block is plainly named
+                    # "GptOssMLP", indistinguishable by name from an
+                    # ordinary dense FFN. Detected generically instead by
+                    # checking for the same Router+Experts child pattern
+                    # _build_moe itself resolves once handed this module,
+                    # rather than trusting the outer class name alone.
+                    child_names = [type(c).__name__ for c in mod.children()]
+                    has_router_and_experts = any("Router" in c for c in child_names) and any("Experts" in c for c in child_names)
+                    ffn_is_moe = "MoE" in cname or "Moe" in cname or has_router_and_experts
                 else:
                     other_children.append((name, mod))
 

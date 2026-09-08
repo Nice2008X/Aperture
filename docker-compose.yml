@@ -1,0 +1,43 @@
+# One image, one service: the root Dockerfile builds the frontend and
+# bundles it into the GPU backend, which serves both. Requires the NVIDIA
+# Container Toolkit on the host
+# (https://github.com/NVIDIA/nvidia-container-toolkit) and Docker Compose
+# v2 (`docker compose`, not the standalone v1 `docker-compose`) for the
+# `deploy.resources.reservations.devices` GPU syntax below to take effect
+# outside of Swarm mode.
+#
+#   docker compose up --build
+#
+# Then open http://localhost:8000.
+
+services:
+  aperture:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Downloaded checkpoints (data/models/) persist across container
+      # recreation instead of re-downloading multi-GB weights every time.
+      - ./data:/app/data
+      # Optional: Hugging Face's own metadata/token cache, so a repeat
+      # config.json lookup or a gated-repo login doesn't hit the network
+      # (or need re-authenticating) on every restart.
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      # Set in a .env file (or the shell) to access gated/private repos —
+      # picked up automatically by huggingface_hub if present, unused
+      # otherwise.
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

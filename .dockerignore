@@ -1,5 +1,14 @@
-@@ -0,0 +1,9 @@ 
 **/node_modules
 **/dist
 **/*.tsbuildinfo
 .git
+
+# Backend: never ship a host-built venv (multi-GB, often arch/GPU-specific)
+# or Python bytecode caches into a build context.
+**/.venv
+**/__pycache__
+**/*.pyc
+
+# Downloaded model checkpoints (data/models/, tens of GB) — never belongs
+# in a build context; the API container gets it via a volume mount instead.
+data
