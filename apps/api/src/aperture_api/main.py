@@ -25,7 +25,7 @@ from .downloads import check_model_support, download_with_progress, request_canc
 from .generation import apply_chat_template, generate_tokens, generation_defaults, has_chat_template
 from .inference import run_attribution_sweep, run_forward
 from .model_registry import ModelRegistry, NoModelLoadedError
-from .paths import MODELS_DIR
+from .paths import MODELS_DIR, WEB_DIST
 from .quantization import dequantize_weight
 from .tensors import encode_bulk_run, encode_tensor
 
@@ -502,3 +502,28 @@ async def generate(body: GenerateRequest):
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class _CachedStaticFiles(StaticFiles):
+    """Vite's hashed build assets (assets/*.js, *.css) never change content
+    without also changing filename, so they're safe to cache forever —
+    mirrors what docker/nginx.conf used to set before this single
+    FastAPI process took over serving the frontend too (see the root
+    Dockerfile)."""
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, immutable, max-age=31536000"
+        return response
+
+
+# Serves the built frontend (apps/web/dist) directly, so a single process
+# (and a single Dockerfile — see the root Dockerfile) handles both the API
+# and the UI: no nginx, no reverse proxy, no cross-origin requests to
+# reason about. Registered last and guarded by WEB_DIST.exists() so a
+# plain `uvicorn aperture_api.main:app` in local dev (no built dist/, the
+# frontend runs on its own Vite dev server instead) doesn't try to serve
+# a directory that isn't there.
+if WEB_DIST.exists():
+    app.mount("/assets", _CachedStaticFiles(directory=WEB_DIST / "assets"), name="web-assets")
+    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

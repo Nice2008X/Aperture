@@ -292,6 +292,29 @@ npm run build
 npm run typecheck
 ```
 
+### Run with Docker
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:8000`. One image, built from the single root
+`Dockerfile`: it builds the frontend (`apps/web`) and bundles it into the
+GPU backend (`apps/api`), which serves both the API and the built UI
+itself — no nginx, no reverse proxy, no second container to keep in sync.
+Requires the [NVIDIA Container
+Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) on the host
+and Docker Compose v2 (`docker compose`, not the standalone v1
+`docker-compose`) for GPU passthrough. Downloaded checkpoints persist in
+`./data` on the host via a bind mount, same as running it without Docker.
+
+Equivalent plain `docker run`, if you'd rather skip Compose:
+
+```bash
+docker build -t aperture .
+docker run --gpus all -p 8000:8000 -v $(pwd)/data:/app/data aperture
+```
+
 ## Usage
 
 1. **Load a model** — pick a catalog entry, or type a `org/model-name`
