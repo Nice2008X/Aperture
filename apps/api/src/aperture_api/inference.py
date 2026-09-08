@@ -266,6 +266,8 @@ def run_forward(loaded: LoadedModel, token_ids: list[int], interventions: list[d
     attention_weights: dict[str, torch.Tensor] = {}
     if out.attentions is not None:
         for i, layer_attn in enumerate(out.attentions):
+            if layer_attn is None:
+                continue
             node_id = f"block.{i}.attn"
             if node_id in loaded.hook_modules:
                 attention_weights[node_id] = layer_attn[0].detach()  # drop batch dim -> [numHeads, seq, seq]

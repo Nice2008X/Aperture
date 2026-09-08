@@ -10,6 +10,10 @@
 # host needs the NVIDIA Container Toolkit installed either way —
 # https://github.com/NVIDIA/nvidia-container-toolkit.
 
+# ARG declared before the first FROM is "global" in Docker — available to
+# every FROM line in the file. Must live here, not inside a stage.
+ARG CUDA_VERSION=12.8.1
+
 # ---- frontend build stage ----
 FROM node:22-alpine AS frontend
 WORKDIR /app
@@ -37,16 +41,40 @@ RUN npm run build
 # checkpoints load through triton-compiled kernels (see the `kernels`
 # dependency in apps/api/pyproject.toml), which can shell out to
 # ptxas/nvcc from the CUDA toolkit at first use; the slimmer runtime image
-# doesn't ship those. CUDA 12.8 matches the cu128 wheel index below —
-# bump both together.
-FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
+# doesn't ship those.
+#
+# CUDA_VERSION and TORCH_CUDA_ARCH must match each other and the host
+# driver — see the table below. Defaults target the latest tested pair;
+# override via --build-arg or docker-compose's args / a .env file.
+#
+#   Host CUDA driver ver  | CUDA_VERSION  | TORCH_CUDA_ARCH
+#   ----------------------|---------------|----------------
+#   12.8.x  (≥570 driver) | 12.8.1        | cu128  ← default
+#   12.6.x  (≥560 driver) | 12.6.3        | cu126
+#   12.4.x  (≥550 driver) | 12.4.1        | cu124
+#   12.1.x  (≥530 driver) | 12.1.0        | cu121
+#
+# Run `nvidia-smi` on the host; the "CUDA Version" field in the top-right
+# corner tells you which row to pick.
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
 
-# Ubuntu 24.04's python3 is already 3.12 (matches apps/api/pyproject.toml's
-# requires-python), so no deadsnakes PPA needed.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
+# Re-declare after FROM so this stage can read it (build-arg scope resets
+# at each FROM; the default must match CUDA_VERSION's default above).
+ARG TORCH_CUDA_ARCH=cu128
+
+# Ubuntu 22.04's python3 is 3.10; deadsnakes PPA gives us 3.12 to match
+# apps/api/pyproject.toml's requires-python = ">=3.12".
+# DEBIAN_FRONTEND=noninteractive + TZ short-circuit tzdata's debconf
+# geographic-area prompt (pulled in transitively by
+# software-properties-common), which otherwise hangs the build waiting on
+# a TTY that a non-interactive `docker build` never provides.
+ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Preserve the monorepo's on-disk layout, not just apps/api in isolation:
@@ -62,7 +90,7 @@ COPY --from=frontend /app/apps/web/dist ./apps/web/dist
 # A venv here is mostly to keep apt's system Python's PEP 668
 # "externally-managed-environment" guard out of the way, not for
 # isolation (this container runs nothing else).
-RUN python3 -m venv /opt/venv
+RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # --extra-index-url (rather than --index-url) is deliberate: it adds
@@ -70,7 +98,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # rather than replacing PyPI outright, so every other dependency below
 # still resolves normally. Pick the index matching the CUDA base image
 # above if you change it (see https://pytorch.org for the current list).
-RUN pip install --no-cache-dir -e ./apps/api --extra-index-url https://download.pytorch.org/whl/cu128
+RUN pip install --no-cache-dir -e ./apps/api --extra-index-url https://download.pytorch.org/whl/${TORCH_CUDA_ARCH}
 
 # data/models/ — downloaded checkpoints — is bind-mounted at runtime
 # (docker-compose.yml) so it survives container recreation; this just

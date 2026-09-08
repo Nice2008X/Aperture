@@ -15,6 +15,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        CUDA_VERSION: ${CUDA_VERSION:-12.8.1}
+        TORCH_CUDA_ARCH: ${TORCH_CUDA_ARCH:-cu128}
     ports:
       - "8000:8000"
     volumes:

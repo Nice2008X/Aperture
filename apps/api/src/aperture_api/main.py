@@ -286,6 +286,8 @@ async def create_run(body: RunRequest):
             run_id = run_forward(loaded, body.tokenIds, body.interventions)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
     activations, attention_weights, router_weights, expert_assignment = loaded.get_run(run_id)
     tokens = loaded.tokenizer.convert_ids_to_tokens(body.tokenIds) if loaded.tokenizer is not None else [f"#{t}" for t in body.tokenIds]
 
