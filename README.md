@@ -1,5 +1,8 @@
 # Aperture
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen)](.nvmrc)
+
 An interactive explorer and debugger for real large language model
 internals, backed by a real GPU. Paste a Hugging Face repo id (or pick one
 already downloaded); the backend fetches it, loads it onto the GPU with
@@ -22,6 +25,21 @@ never receives model weights in bulk — it fetches windowed slices of
 whatever tensor you're currently looking at.
 
 ![Screenshot of Aperture: the model tree, a transformer block's Attention internals with a scope box grouping its Q/K/V/Output projections, the Inspector panel showing an Input Construction breakdown, and the Tensor Explorer's activation heatmap](docs/screenshot.png)
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Getting started](#getting-started)
+- [Usage](#usage)
+- [Verifying correctness](#verifying-correctness)
+- [Known limitations](#known-limitations)
+- [Contributing](#contributing)
+- [Citation](#citation)
+- [Credits](#credits)
+- [License](#license)
 
 ## Screenshots
 
@@ -365,6 +383,22 @@ reimplementation of the same idea.
   logic is unreachable in practice (a `backend`-sourced model never needs
   it) but hasn't been trimmed out, since it's still a real, imported
   dependency, not dead code (see [Legacy packages](#legacy-packages)).
+
+## Contributing
+
+Bug reports and feature requests are welcome via [GitHub
+Issues](https://github.com/Nice2008X/Aperture/issues) — the tracker has
+separate templates for each. For anything security-sensitive, report it
+privately per [SECURITY.md](SECURITY.md) rather than opening a public
+issue. There's no formal contribution process yet; for a non-trivial
+change, opening an issue first to align on approach is a good idea before
+sinking time into a PR.
+
+## Citation
+
+A [`CITATION.cff`](CITATION.cff) is included if you want to cite this
+project — GitHub's "Cite this repository" button (in the sidebar) reads it
+to generate a citation in several formats.
 
 ## Credits
 
