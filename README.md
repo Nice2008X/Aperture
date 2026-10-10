@@ -281,11 +281,13 @@ uv venv && uv pip install -e . --extra-index-url https://download.pytorch.org/wh
 ```
 
 ### Run in development
-
+ 
 Two processes, in separate terminals:
 
 ```bash
 # backend — from apps/api, with its venv active
+#  — cd apps/api
+#  — source .venv/bin/activate
 uvicorn aperture_api.main:app --reload --port 8000
 
 # frontend — from the repo root

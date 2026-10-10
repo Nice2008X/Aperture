@@ -397,7 +397,8 @@ input, select { font-family: inherit; }
   font-weight: 600;
   transition: background-color var(--transition-fast);
 }
-.model-loader-load-btn:hover { background: var(--accent-hover); }
+.model-loader-load-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.model-loader-load-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Model library header + per-card unload/delete actions --- */
 .model-loader-catalog-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 8px; }
@@ -479,6 +480,23 @@ input, select { font-family: inherit; }
   border-radius: 2px;
 }
 .model-loader-source-hint { margin: 0 0 10px; font-size: 11px; color: var(--text-tertiary); }
+/* Preset shortcuts — one-click repo ids offered above the manual form;
+   hidden entirely once every preset is already in the catalog. */
+.model-loader-presets { margin-bottom: 10px; }
+.model-loader-presets-label { margin-bottom: 6px; font-size: 11px; color: var(--text-tertiary); }
+.model-loader-presets-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip {
+  padding: 5px 12px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+.preset-chip:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-hover); }
+.preset-chip:disabled { opacity: 0.6; cursor: default; }
 .model-loader-download-complete { margin-top: 8px; font-size: 12px; color: var(--success); }
 .model-loader-download-form { display: flex; gap: 8px; }
 .model-loader-download-form input {

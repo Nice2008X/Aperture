@@ -131,6 +131,22 @@ function modelIdForRepo(repo: string): string {
 }
 
 /**
+ * A handful of small, known-good repo ids offered as one-click shortcuts
+ * above the manual repo-id form, so a brand-new user isn't staring at an
+ * empty catalog with nothing but a blank text field. Each chip is dropped
+ * from the list the moment its repo is already in the catalog (checked by
+ * hfRepo, see availablePresets below) — once every preset here has been
+ * downloaded the whole section hides itself rather than showing a row of
+ * chips that all do nothing.
+ */
+const PRESET_MODELS: { repo: string; label: string }[] = [
+  { repo: "Qwen/Qwen3.5-0.8B", label: "Qwen 3.5 0.8B" },
+  { repo: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", label: "DeepSeek-R1-Distill-Qwen-1.5B" },
+  { repo: "microsoft/Phi-4-mini-instruct", label: "Phi-4-mini (3.8B)" },
+  { repo: "google/gemma-4-E4B", label: "Gemma 4E 4B" },
+];
+
+/**
  * Real checkpoints live in data/models/ on the GPU backend (PLAN.md §3) —
  * the catalog list is whatever's already downloaded there. Pasting a
  * Hugging Face repo id below triggers the backend to pull it on demand
@@ -298,6 +314,18 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
     await runDownload(repoId);
   };
 
+  // A preset chip skips the text field entirely but still goes through the
+  // exact same beginDownload → checkModelSupport → runDownload pipeline as
+  // the manual form, and still sets `repo` state first — Pause/Cancel
+  // (requestDownloadStop) and Resume both read that id back out of state
+  // rather than a parameter, so it has to be in place before the download
+  // actually starts.
+  const startPresetDownload = (repoId: string) => {
+    if (downloading || downloadPaused) return;
+    setRepo(repoId);
+    void beginDownload(repoId);
+  };
+
   const confirmUnsupportedDownload = () => {
     const repoId = unsupportedWarning?.repo;
     setUnsupportedWarning(null);
@@ -332,11 +360,34 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
   };
 
   const entries = catalog.status === "ready" ? catalog.entries.filter((e) => e.id !== excludeModelId) : [];
+  // Checked against the unfiltered catalog (not `entries`) — a preset
+  // already downloaded should disappear here even if it happens to be the
+  // one model excludeModelId is hiding from the pick list below.
+  const availablePresets =
+    catalog.status === "ready" ? PRESET_MODELS.filter((p) => !catalog.entries.some((e) => e.hfRepo === p.repo)) : [];
   const downloading = download.status === "downloading";
   const downloadPaused = download.status === "paused";
   const parsedRepo = extractRepoId(repo);
   const repoValid = SAFE_REPO_ID_RE.test(parsedRepo);
   const modelLoading = status === "loading";
+  // The loader card can easily grow taller than the viewport (GPU status +
+  // download form + a long catalog + an expanded card's config), and
+  // .app-loader-screen centers it with plain flexbox — no overflow/scroll
+  // affordance of its own, so the page only grows a native scrollbar once
+  // content actually overflows. The load-progress footer is the very last
+  // thing in the card, which means clicking "Load model" on a card near
+  // the bottom of a long list (or with several entries already shown)
+  // routinely lands it below the fold with nothing on screen hinting
+  // there's more to scroll to — confirmed empirically (headless render at
+  // a typical 1280x800 viewport: the footer sits at y=833 while the
+  // viewport is only 800 tall, right after the button's own click
+  // handler ran). Scrolling it into view the moment a load starts is
+  // simpler and more reliable than trying to keep the whole card short
+  // enough to never overflow.
+  const loadFooterRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (modelLoading) loadFooterRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [modelLoading]);
   const gpuInfo = gpu && gpu.available ? gpu : null;
   const pageCount = Math.max(1, Math.ceil(entries.length / perPage));
   const clampedPage = Math.min(page, pageCount - 1);
@@ -499,6 +550,25 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
           <span className="model-loader-source-tab active">{t("loader.sourceHuggingFace")}</span>
         </div>
         <p className="model-loader-source-hint">{t("loader.sourceHuggingFaceHint")}</p>
+        {availablePresets.length > 0 && (
+          <div className="model-loader-presets">
+            <div className="model-loader-presets-label">{t("loader.presetsLabel")}</div>
+            <div className="model-loader-presets-list">
+              {availablePresets.map((preset) => (
+                <button
+                  key={preset.repo}
+                  type="button"
+                  className="preset-chip"
+                  disabled={downloading || downloadPaused}
+                  title={preset.repo}
+                  onClick={() => startPresetDownload(preset.repo)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <form className="model-loader-download-form" onSubmit={startDownload}>
           <input
             value={repo}
@@ -792,7 +862,7 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
       {status === "error" && <div className="model-loader-error">{error}</div>}
 
       {loadingProgress && (
-        <div className="model-loader-footer model-loader-download-progress-row">
+        <div ref={loadFooterRef} className="model-loader-footer model-loader-download-progress-row">
           <div className="model-loader-download-progress">
             <LoadProgressBar progress={loadingProgress} />
           </div>
