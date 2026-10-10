@@ -19,6 +19,35 @@ export interface Tokenizer {
   decodeToken(id: number): string;
 }
 
+/**
+ * tokenizer.json's `post_processor` is what actually injects special
+ * tokens around the encoded sequence — for the SentencePiece-style
+ * tokenizers (Llama/Mistral/Gemma) this is a TemplateProcessing step that
+ * always prepends `<bos>`, not something `add_bos_token` in
+ * tokenizer_config.json controls (that field is often absent/null even
+ * when tokenizer.json's own post_processor still adds it unconditionally,
+ * e.g. Gemma). A byte-level tokenizer (GPT-2/Qwen) instead gets a plain
+ * `ByteLevel` post_processor, which is a no-op here — it only concerns
+ * offset trimming, not special tokens — so only `TemplateProcessing` is
+ * handled below; every other type (including `ByteLevel` and `None`)
+ * leaves encode() unchanged, matching today's behavior for those models.
+ *
+ * Skipping this entirely (as this file did before) is silently wrong for
+ * any model that relies on it: confirmed against a real forward pass
+ * (gemma-4-E4B, transformers 5.16.1) that "The cat sat on the" predicts
+ * " mat" at 63.6% with `<bos>` correctly prepended, vs. the nonsensical
+ * " cat" at 47% (with `<eos>` a close second) when it's left out — i.e.
+ * exactly the "wrong top prediction" / "generate produces nothing" bug
+ * this was causing.
+ */
+type TemplateStep = { SpecialToken: { id: string; type_id: number } } | { Sequence: { id: string; type_id: number } };
+
+interface TemplateProcessingSpec {
+  type: "TemplateProcessing";
+  single: TemplateStep[];
+  special_tokens: Record<string, { id: string; ids: number[]; tokens: string[] }>;
+}
+
 interface RawTokenizerJson {
   model: {
     type: string;
@@ -27,6 +56,24 @@ interface RawTokenizerJson {
   };
   pre_tokenizer?: PreTokenizerSpec | null;
   normalizer?: NormalizerSpec | null;
+  post_processor?: { type: string } | TemplateProcessingSpec | null;
+}
+
+/** Applies a `single`-sequence TemplateProcessing template around one already-encoded body — the only shape this app's callers ever need (one prompt, never a sentence pair). */
+function applyTemplate(template: TemplateProcessingSpec, bodyIds: number[], bodyTokens: string[]): { ids: number[]; tokens: string[] } {
+  const ids: number[] = [];
+  const tokens: string[] = [];
+  for (const step of template.single) {
+    if ("SpecialToken" in step) {
+      const spec = template.special_tokens[step.SpecialToken.id];
+      ids.push(spec.ids[0]);
+      tokens.push(spec.tokens[0]);
+    } else {
+      ids.push(...bodyIds);
+      tokens.push(...bodyTokens);
+    }
+  }
+  return { ids, tokens };
 }
 
 /**
@@ -77,6 +124,7 @@ function buildTokenizer(raw: RawTokenizerJson): Tokenizer {
   const { isByteLevel, splitSteps } = resolveByteLevel(raw.pre_tokenizer);
   const needsNFC = isByteLevel && normalizerRequiresNFC(raw.normalizer);
   const stripsArtificialLeadingSpace = !isByteLevel && normalizerHasPrepend(raw.normalizer);
+  const template = raw.post_processor?.type === "TemplateProcessing" ? (raw.post_processor as TemplateProcessingSpec) : null;
 
   function encode(text: string): EncodeResult {
     const normalized = needsNFC ? text.normalize("NFC") : text;
@@ -84,20 +132,25 @@ function buildTokenizer(raw: RawTokenizerJson): Tokenizer {
       ? gpt2Pretokenize(normalized, splitSteps ?? undefined)
       : [spBpePretokenize(text, vocab, raw.normalizer)];
 
-    const ids: number[] = [];
-    const tokens: string[] = [];
+    const bodyIds: number[] = [];
+    const bodyTokens: string[] = [];
     for (const symbols of wordSymbolGroups) {
       for (const piece of bpeMerge(symbols, mergeRank)) {
         const id = vocab.get(piece);
         if (id === undefined) continue; // shouldn't happen for well-formed BPE output
-        ids.push(id);
-        tokens.push(piece);
+        bodyIds.push(id);
+        bodyTokens.push(piece);
       }
     }
 
+    const { ids, tokens } = template ? applyTemplate(template, bodyIds, bodyTokens) : { ids: bodyIds, tokens: bodyTokens };
+
     // per-token display pieces keep their natural leading space (if any) —
     // only the *whole-sequence* decode() strips the single artificial one
-    // that a Prepend normalizer step adds at the very start.
+    // that a Prepend normalizer step adds at the very start. A prepended
+    // special token (e.g. "<bos>") round-trips through this unchanged —
+    // neither gpt2ByteDecode nor spBpeDecodePieces touch a piece with no
+    // byte-fallback/space-marker syntax of their own.
     const displayTokens = tokens.map((t) => (isByteLevel ? gpt2ByteDecode(t) : spBpeDecodePieces([t])));
     return { ids, tokens, displayTokens };
   }

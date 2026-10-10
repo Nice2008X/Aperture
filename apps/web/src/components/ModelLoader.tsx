@@ -370,6 +370,24 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
   const parsedRepo = extractRepoId(repo);
   const repoValid = SAFE_REPO_ID_RE.test(parsedRepo);
   const modelLoading = status === "loading";
+  // The loader card can easily grow taller than the viewport (GPU status +
+  // download form + a long catalog + an expanded card's config), and
+  // .app-loader-screen centers it with plain flexbox — no overflow/scroll
+  // affordance of its own, so the page only grows a native scrollbar once
+  // content actually overflows. The load-progress footer is the very last
+  // thing in the card, which means clicking "Load model" on a card near
+  // the bottom of a long list (or with several entries already shown)
+  // routinely lands it below the fold with nothing on screen hinting
+  // there's more to scroll to — confirmed empirically (headless render at
+  // a typical 1280x800 viewport: the footer sits at y=833 while the
+  // viewport is only 800 tall, right after the button's own click
+  // handler ran). Scrolling it into view the moment a load starts is
+  // simpler and more reliable than trying to keep the whole card short
+  // enough to never overflow.
+  const loadFooterRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (modelLoading) loadFooterRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [modelLoading]);
   const gpuInfo = gpu && gpu.available ? gpu : null;
   const pageCount = Math.max(1, Math.ceil(entries.length / perPage));
   const clampedPage = Math.min(page, pageCount - 1);
@@ -844,7 +862,7 @@ export function ModelLoader({ status, error, onLoad, excludeModelId, loadProgres
       {status === "error" && <div className="model-loader-error">{error}</div>}
 
       {loadingProgress && (
-        <div className="model-loader-footer model-loader-download-progress-row">
+        <div ref={loadFooterRef} className="model-loader-footer model-loader-download-progress-row">
           <div className="model-loader-download-progress">
             <LoadProgressBar progress={loadingProgress} />
           </div>
